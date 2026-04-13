@@ -1,0 +1,1007 @@
+html_content = r'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Glitch Cubes Generator – Consolidated Update</title>
+<style>
+html,body{
+  margin:0;
+  padding:0;
+  background:#111;
+  overflow:hidden;
+}
+canvas{display:block}
+
+#panel{
+  position:fixed;
+  top:20px;
+  left:-290px;
+  width:280px;
+  max-height:calc(100vh - 40px);
+  overflow-y:auto;
+  padding:10px;
+  background:rgba(20,20,20,0.96);
+  color:#ccc;
+  font-family:monospace;
+  font-size:12px;
+  border:1px solid #333;
+  transition:left .3s ease;
+  z-index:10;
+  box-shadow:0 0 20px rgba(0,0,0,0.35);
+}
+#panel.open{left:10px}
+#panel h3{
+  margin:10px 0 6px;
+  color:#fff;
+  font-size:12px;
+  letter-spacing:.04em;
+}
+
+.palette-grid{
+  display:grid;
+  grid-template-columns:repeat(5,26px);
+  gap:6px;
+  margin-bottom:8px;
+}
+.palette-btn{
+  width:26px;
+  height:26px;
+  border-radius:50%;
+  border:1px solid #555;
+  cursor:pointer;
+  box-sizing:border-box;
+  transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+.palette-btn:hover{transform:scale(1.06)}
+.palette-btn.active{
+  border:2px solid #fff;
+  box-shadow:0 0 0 2px #0ff, 0 0 12px rgba(0,255,255,.45);
+}
+
+.dir-row,.lock-row,.misc-row{
+  display:flex;
+  gap:4px;
+  margin-bottom:6px;
+}
+
+.dir-btn,.lock-btn,.misc-btn, select, .panel-btn{
+  background:#222;
+  border:1px solid #444;
+  color:#ccc;
+  cursor:pointer;
+  font-family:inherit;
+  font-size:12px;
+}
+
+.dir-btn,.lock-btn,.misc-btn{
+  flex:1;
+  padding:5px 0;
+}
+.dir-btn.active,
+.lock-btn.active,
+.misc-btn.active{
+  background:#0ff;
+  color:#000;
+  font-weight:bold;
+}
+
+.control{margin:7px 0}
+.control label{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:11px;
+  margin-bottom:4px;
+}
+.control input[type="checkbox"]{margin:0}
+.control input[type="range"],
+.control input[type="number"],
+.control select{
+  width:100%;
+  box-sizing:border-box;
+}
+
+.panel-btn{
+  width:100%;
+  margin-top:6px;
+  padding:7px;
+}
+
+.small-note{
+  color:#888;
+  font-size:10px;
+  line-height:1.4;
+  margin-top:6px;
+}
+
+.custom-palette-row{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:6px;
+}
+.custom-palette-row input[type="color"]{
+  width:100%;
+  height:34px;
+  padding:0;
+  border:1px solid #444;
+  background:#222;
+  cursor:pointer;
+}
+
+.bpm-row{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.bpm-row input{flex:1}
+.bpm-indicator{
+  width:12px;
+  height:12px;
+  border-radius:50%;
+  background:#333;
+  flex:0 0 auto;
+}
+.bpm-buttons{
+  display:flex;
+  gap:4px;
+  margin-top:4px;
+}
+.bpm-buttons button{
+  flex:1;
+  background:#222;
+  border:1px solid #444;
+  color:#ccc;
+  cursor:pointer;
+  font-family:inherit;
+  font-size:12px;
+  padding:5px 0;
+}
+
+#panel-tab{
+  position:fixed;
+  top:40px;
+  left:0;
+  width:16px;
+  height:60px;
+  background:#222;
+  border:1px solid #444;
+  border-left:none;
+  cursor:pointer;
+  z-index:11;
+}
+#panel-tab::after{
+  content:"≡";
+  color:#888;
+  position:absolute;
+  top:20px;
+  left:3px;
+}
+
+#hud{
+  position:fixed;
+  right:14px;
+  bottom:12px;
+  z-index:12;
+  font:11px monospace;
+  color:#999;
+  background:rgba(0,0,0,.28);
+  border:1px solid rgba(255,255,255,.08);
+  padding:6px 8px;
+  pointer-events:none;
+  backdrop-filter: blur(2px);
+}
+
+.value-row{
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+  margin-bottom:2px;
+}
+.value-row span:last-child{color:#ddd}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="panel">
+  <h3>Palettes</h3>
+  <div class="palette-grid" id="paletteGrid"></div>
+
+  <h3>Custom 3-Colour Palette</h3>
+  <div class="custom-palette-row">
+    <input id="customColour1" type="color" value="#00ffff" />
+    <input id="customColour2" type="color" value="#ff00ff" />
+    <input id="customColour3" type="color" value="#ffffff" />
+  </div>
+
+  <h3>Direction</h3>
+  <div class="dir-row" id="directionRow">
+    <button class="dir-btn" data-dir="0">↓</button>
+    <button class="dir-btn" data-dir="1">↑</button>
+    <button class="dir-btn" data-dir="2">→</button>
+    <button class="dir-btn" data-dir="3">←</button>
+    <button class="dir-btn" data-dir="4">✕</button>
+  </div>
+
+  <div class="control">
+    <label for="speed">Speed</label>
+    <input id="speed" type="range" min="0.1" max="4" step="0.1" value="1" />
+  </div>
+
+  <div class="control">
+    <label for="density">Density</label>
+    <input id="density" type="range" min="50" max="400" step="10" value="220" />
+  </div>
+
+  <div class="control">
+    <label for="avgSize">Average Size</label>
+    <input id="avgSize" type="range" min="10" max="300" step="5" value="80" />
+  </div>
+
+  <div class="control">
+    <label for="sizeVariance">Size Randomness (x50)</label>
+    <input id="sizeVariance" type="range" min="0" max="1" step="0.05" value="0.6" />
+  </div>
+
+  <h3>Fade (seconds)</h3>
+  <div class="control">
+    <label for="fadeIn">Fade In</label>
+    <input id="fadeIn" type="range" min="0" max="5" step="0.1" value="0" />
+  </div>
+  <div class="control">
+    <label for="fadeOut">Fade Out</label>
+    <input id="fadeOut" type="range" min="0" max="5" step="0.1" value="0" />
+  </div>
+
+  <h3>Structure</h3>
+  <div class="lock-row" id="lockRow">
+    <button class="lock-btn active" data-lock="free">Free</button>
+    <button class="lock-btn" data-lock="columns">Columns</button>
+    <button class="lock-btn" data-lock="grid">Grid</button>
+  </div>
+
+  <div class="control">
+    <label for="gridSize">Grid / Column Size</label>
+    <input id="gridSize" type="range" min="20" max="300" step="10" value="100" />
+  </div>
+
+  <div class="control">
+    <label for="gridJitter">Grid Jitter</label>
+    <input id="gridJitter" type="range" min="0" max="40" step="2" value="10" />
+  </div>
+
+  <h3>Auto Cycling (BPM)</h3>
+  <div class="control bpm-row">
+    <input id="baseBPM" type="number" min="40" max="300" value="120" />
+    <div class="bpm-indicator" id="bpmIndicator"></div>
+  </div>
+
+  <div class="bpm-buttons">
+    <button data-multi="0.25">¼</button>
+    <button data-multi="0.5">½</button>
+    <button data-multi="1">1×</button>
+    <button data-multi="2">×2</button>
+    <button data-multi="4">×4</button>
+  </div>
+
+  <div class="bpm-buttons">
+    <button id="resetBeatBtn">Reset Beat</button>
+  </div>
+
+  <div class="control">
+    <label><input id="autoCycleDirection" type="checkbox"> Cycle Direction (Random)</label>
+  </div>
+  <div class="control">
+    <label><input id="autoCyclePalette" type="checkbox"> Cycle Palette (Random)</label>
+  </div>
+
+  <div class="control">
+    <label for="pulseAmount">Size Pulse (Beat)</label>
+    <input id="pulseAmount" type="range" min="0" max="0.5" step="0.01" value="0" />
+  </div>
+
+  <h3>Look</h3>
+  <div class="control">
+    <label for="trailAlpha">Trail Amount</label>
+    <input id="trailAlpha" type="range" min="0" max="1" step="0.01" value="0.25" />
+  </div>
+
+  <div class="control">
+    <label for="scanlineStrength">Scanline Strength</label>
+    <input id="scanlineStrength" type="range" min="0" max="0.4" step="0.01" value="0" />
+  </div>
+
+  <div class="control">
+    <label for="blendMode">Blend Mode</label>
+    <select id="blendMode">
+      <option value="source-over">normal</option>
+      <option value="screen">screen</option>
+      <option value="lighter">lighter / add</option>
+      <option value="difference">difference</option>
+      <option value="lighten">lighten (max)</option>
+      <option value="exclusion">exclusion</option>
+    </select>
+  </div>
+
+  <h3>Utilities</h3>
+  <div class="misc-row">
+    <button class="misc-btn" id="pauseBtn">Pause</button>
+    <button class="misc-btn" id="fullscreenBtn">Full</button>
+  </div>
+  <div class="misc-row">
+    <button class="misc-btn" id="randomiseBtn">Randomise</button>
+  </div>
+
+  <button class="panel-btn" id="exportPresetBtn">Export Preset</button>
+  <button class="panel-btn" id="importPresetBtn">Import Preset</button>
+  <input id="importPresetInput" type="file" accept=".json,application/json" style="display:none" />
+
+  <button class="panel-btn" id="exportBtn">Export Still</button>
+  <button class="panel-btn" id="resetBtn">Reset</button>
+
+  <div class="small-note">
+    Shortcuts: <br>
+    <strong>Space</strong> pause, <strong>F</strong> fullscreen, <strong>R</strong> randomise, <strong>E</strong> export, <strong>Tab</strong> panel, <strong>D</strong> direction cycle
+  </div>
+</div>
+
+<div id="panel-tab"></div>
+
+<div id="hud">
+  <div class="value-row"><span>Mode</span><span id="hudMode">free</span></div>
+  <div class="value-row"><span>Dir</span><span id="hudDir">↓</span></div>
+  <div class="value-row"><span>BPM</span><span id="hudBpm">120</span></div>
+  <div class="value-row"><span>Blocks</span><span id="hudBlocks">220</span></div>
+</div>
+
+<script>
+const c = document.getElementById('c');
+const ctx = c.getContext('2d');
+const panel = document.getElementById('panel');
+const panelTab = document.getElementById('panel-tab');
+const paletteGrid = document.getElementById('paletteGrid');
+const bpmIndicator = document.getElementById('bpmIndicator');
+
+const hudMode = document.getElementById('hudMode');
+const hudDir = document.getElementById('hudDir');
+const hudBpm = document.getElementById('hudBpm');
+const hudBlocks = document.getElementById('hudBlocks');
+
+const customColour1 = document.getElementById('customColour1');
+const customColour2 = document.getElementById('customColour2');
+const customColour3 = document.getElementById('customColour3');
+
+panelTab.onclick = () => panel.classList.toggle('open');
+
+function resize() {
+  c.width = innerWidth;
+  c.height = innerHeight;
+}
+addEventListener('resize', resize);
+resize();
+
+const palettes = [
+  ['#ff2e5f','#2ec4c6','#f7f7f7','#1f2732','#0a0a0a'],
+  ['#ffffff','#000000','#ff0040','#00e0ff','#222222'],
+  ['#00ffc8','#003333','#000000','#ffffff','#ff0066'],
+  ['#ffcc00','#ff0066','#220022','#ffffff','#000000'],
+  ['#f1f1f1','#111111','#444444','#ff3333','#00ffff'],
+  ['#ff005d','#00ffcc','#111111','#eaeaea','#003344'],
+  ['#00ff44','#002200','#ffffff','#ff2200','#111111'],
+  ['#ff8800','#552200','#111111','#ffeecc','#00ffee'],
+  ['#ff00ff','#00ffff','#000000','#ffffff','#222222'],
+  ['#d9d9d9','#8e8e8e','#555555','#222222','#000000'],
+  ['#00f0ff','#00a2ff','#001f3f','#7fdbff','#ffffff'],
+  ['#39ff14','#0b3d0b','#c7ff00','#051b11','#f5fff0'],
+  ['#ff5e00','#ffb703','#2b1600','#fff0d6','#7a2e00'],
+  ['#ff6b6b','#ffd166','#06d6a0','#118ab2','#073b4c'],
+  ['#f72585','#7209b7','#3a0ca3','#4361ee','#4cc9f0'],
+  ['#d90429','#2b2d42','#8d99ae','#edf2f4','#ef233c'],
+  ['#00ffcc','#0d0d0d','#1a1a40','#ff00aa','#fefefe'],
+  ['#c2b280','#5c4b3b','#2e2a24','#f5f1e6','#8d6e63']
+];
+
+function getCustomPalette(){
+  return [customColour1.value, customColour2.value, customColour3.value, '#111111', '#f5f5f5'];
+}
+
+function getAllPalettes(){
+  return [...palettes, getCustomPalette()];
+}
+
+let blocks = [];
+let paletteIndex = 0;
+let maxBlocks = 220;
+let avgSize = 80;
+let sizeVariance = 0.6;
+let speedBase = 1;
+let directionMode = 0;
+let lockMode = 'free';
+let gridSize = 100;
+let gridJitter = 10;
+let fadeInSeconds = 0;
+let fadeOutSeconds = 0;
+let scanlineStrength = 0;
+let trailAlpha = 0.25;
+let blendMode = 'source-over';
+let baseBPM = 120;
+let bpm = 120;
+let autoCycleDirection = false;
+let autoCyclePalette = false;
+let lastBeat = 0;
+let pulseAmount = 0;
+let pulseValue = 0;
+let paused = false;
+let lastTime = performance.now();
+
+const dirSymbols = ['↓','↑','→','←','✕'];
+
+function rand(a, b) { return Math.random() * (b - a) + a; }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function randomInt(max){ return Math.floor(Math.random() * max); }
+function randomIntExcept(max, current){
+  if(max <= 1) return current;
+  let v = current;
+  while(v === current){
+    v = randomInt(max);
+  }
+  return v;
+}
+
+function currentPalette(){
+  return getAllPalettes()[paletteIndex];
+}
+
+function setDensity(n) {
+  maxBlocks = n;
+  rebuildBlocks();
+}
+
+function setBaseBPM(v) {
+  baseBPM = clamp(parseFloat(v) || 120, 40, 300);
+  bpm = baseBPM;
+  syncUI();
+}
+
+function multiplyBPM(f) {
+  bpm = clamp(baseBPM * f, 10, 1200);
+  syncUI();
+}
+
+function resetBeat() {
+  lastBeat = 0;
+}
+
+function setDirectionMode(mode) {
+  directionMode = mode;
+  document.querySelectorAll('.dir-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.dir, 10) === directionMode);
+  });
+  syncHUD();
+}
+
+function setLockMode(mode) {
+  lockMode = mode;
+  document.querySelectorAll('.lock-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.lock === lockMode);
+  });
+  syncHUD();
+}
+
+function setPaletteIndex(i) {
+  const total = getAllPalettes().length;
+  paletteIndex = ((i % total) + total) % total;
+  document.querySelectorAll('.palette-btn').forEach((btn, idx) => {
+    btn.classList.toggle('active', idx === paletteIndex);
+  });
+}
+
+function syncHUD() {
+  hudMode.textContent = lockMode;
+  hudDir.textContent = dirSymbols[directionMode];
+  hudBpm.textContent = String(Math.round(bpm * 100) / 100);
+  hudBlocks.textContent = String(maxBlocks);
+}
+
+function syncUI() {
+  document.getElementById('speed').value = speedBase;
+  document.getElementById('density').value = maxBlocks;
+  document.getElementById('avgSize').value = avgSize;
+  document.getElementById('sizeVariance').value = sizeVariance;
+  document.getElementById('fadeIn').value = fadeInSeconds;
+  document.getElementById('fadeOut').value = fadeOutSeconds;
+  document.getElementById('gridSize').value = gridSize;
+  document.getElementById('gridJitter').value = gridJitter;
+  document.getElementById('baseBPM').value = baseBPM;
+  document.getElementById('pulseAmount').value = pulseAmount;
+  document.getElementById('scanlineStrength').value = scanlineStrength;
+  document.getElementById('trailAlpha').value = trailAlpha;
+  document.getElementById('blendMode').value = blendMode;
+  document.getElementById('autoCycleDirection').checked = autoCycleDirection;
+  document.getElementById('autoCyclePalette').checked = autoCyclePalette;
+  setDirectionMode(directionMode);
+  setLockMode(lockMode);
+  setPaletteIndex(paletteIndex);
+  syncHUD();
+}
+
+function clearCanvas() {
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.restore();
+}
+
+function exportFrame() {
+  c.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `glitch-cubes-${Date.now()}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 500);
+  });
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.();
+  } else {
+    document.exitFullscreen?.();
+  }
+}
+
+function randomiseSettings() {
+  setPaletteIndex(randomInt(getAllPalettes().length));
+  setDirectionMode(randomInt(5));
+  setLockMode(['free','columns','grid'][randomInt(3)]);
+
+  speedBase = rand(0.4, 3.2);
+  maxBlocks = Math.round(rand(80, 360) / 10) * 10;
+  avgSize = rand(20, 180);
+  sizeVariance = rand(0.15, 1);
+  fadeInSeconds = rand(0, 1.6);
+  fadeOutSeconds = rand(0, 1.8);
+  gridSize = rand(30, 180);
+  gridJitter = rand(0, 26);
+  trailAlpha = rand(0.08, 0.5);
+  scanlineStrength = rand(0, 0.22);
+  pulseAmount = rand(0, 0.22);
+  baseBPM = Math.round(rand(70, 180));
+  bpm = baseBPM * [0.5, 1, 2][randomInt(3)];
+  autoCycleDirection = Math.random() > 0.5;
+  autoCyclePalette = Math.random() > 0.5;
+  blendMode = ['source-over','screen','lighter','difference','lighten','exclusion'][randomInt(6)];
+
+  rebuildBlocks();
+  syncUI();
+}
+
+function getPresetState() {
+  return {
+    version: 1,
+    paletteIndex,
+    maxBlocks,
+    avgSize,
+    sizeVariance,
+    speedBase,
+    directionMode,
+    lockMode,
+    gridSize,
+    gridJitter,
+    fadeInSeconds,
+    fadeOutSeconds,
+    scanlineStrength,
+    trailAlpha,
+    baseBPM,
+    bpm,
+    autoCycleDirection,
+    autoCyclePalette,
+    pulseAmount,
+    blendMode,
+    custom1: customColour1.value,
+    custom2: customColour2.value,
+    custom3: customColour3.value
+  };
+}
+
+function applyPreset(p) {
+  if (!p || typeof p !== 'object') return;
+
+  customColour1.value = p.custom1 ?? customColour1.value;
+  customColour2.value = p.custom2 ?? customColour2.value;
+  customColour3.value = p.custom3 ?? customColour3.value;
+
+  const totalPalettes = getAllPalettes().length;
+
+  paletteIndex = clamp(parseInt(p.paletteIndex ?? paletteIndex, 10), 0, totalPalettes - 1);
+  maxBlocks = clamp(parseInt(p.maxBlocks ?? maxBlocks, 10), 10, 1000);
+  avgSize = clamp(parseFloat(p.avgSize ?? avgSize), 1, 1000);
+  sizeVariance = clamp(parseFloat(p.sizeVariance ?? sizeVariance), 0, 1);
+  speedBase = clamp(parseFloat(p.speedBase ?? speedBase), 0.01, 20);
+  directionMode = clamp(parseInt(p.directionMode ?? directionMode, 10), 0, 4);
+  lockMode = ['free', 'columns', 'grid'].includes(p.lockMode) ? p.lockMode : lockMode;
+  gridSize = clamp(parseFloat(p.gridSize ?? gridSize), 5, 1000);
+  gridJitter = clamp(parseFloat(p.gridJitter ?? gridJitter), 0, 500);
+  fadeInSeconds = clamp(parseFloat(p.fadeInSeconds ?? fadeInSeconds), 0, 20);
+  fadeOutSeconds = clamp(parseFloat(p.fadeOutSeconds ?? fadeOutSeconds), 0, 20);
+  scanlineStrength = clamp(parseFloat(p.scanlineStrength ?? scanlineStrength), 0, 1);
+  trailAlpha = clamp(parseFloat(p.trailAlpha ?? trailAlpha), 0, 1);
+  baseBPM = clamp(parseFloat(p.baseBPM ?? baseBPM), 1, 1000);
+  bpm = clamp(parseFloat(p.bpm ?? bpm), 1, 4000);
+  autoCycleDirection = !!p.autoCycleDirection;
+  autoCyclePalette = !!p.autoCyclePalette;
+  pulseAmount = clamp(parseFloat(p.pulseAmount ?? pulseAmount), 0, 2);
+
+  const allowedBlendModes = [
+    'source-over',
+    'screen',
+    'lighter',
+    'difference',
+    'lighten',
+    'exclusion'
+  ];
+  blendMode = allowedBlendModes.includes(p.blendMode) ? p.blendMode : 'source-over';
+
+  buildPaletteUI();
+  rebuildBlocks();
+  syncUI();
+  clearCanvas();
+}
+
+function exportPreset() {
+  const preset = getPresetState();
+  const blob = new Blob([JSON.stringify(preset, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `glitch-cubes-preset-${Date.now()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 500);
+}
+
+function importPresetFromFile(file) {
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const preset = JSON.parse(e.target.result);
+      applyPreset(preset);
+    } catch (err) {
+      console.error('Preset import failed:', err);
+      alert('Preset import failed: invalid JSON file.');
+    }
+  };
+  reader.readAsText(file);
+}
+
+class Block {
+  constructor() {
+    this.reset(true);
+  }
+
+  reset(initial = false) {
+    const hugeVariance = avgSize * sizeVariance * 50;
+    const maxDimension = Math.max(c.width, c.height) * 1.5;
+
+    this.w = clamp(avgSize + (Math.random() - 0.5) * hugeVariance, 4, maxDimension);
+    this.h = clamp(avgSize + (Math.random() - 0.5) * hugeVariance, 4, maxDimension);
+
+    this.baseX = Math.floor(Math.random() * Math.max(1, c.width / gridSize)) * gridSize;
+    this.baseY = Math.floor(Math.random() * Math.max(1, c.height / gridSize)) * gridSize;
+
+    this.x = initial ? Math.random() * c.width : this.baseX;
+    this.y = initial ? Math.random() * c.height : this.baseY;
+
+    this.vx = rand(-3, 3);
+    this.vy = rand(-3, 3);
+
+    const palette = currentPalette();
+    this.col = palette[Math.floor(Math.random() * palette.length)];
+
+    this.lifeMax = rand(1.5, 12.0);
+    this.life = this.lifeMax;
+    this.age = 0;
+  }
+
+  move(dt) {
+    const s = speedBase * dt * 60;
+
+    if (lockMode === 'columns') {
+      this.x = this.baseX + rand(-gridJitter, gridJitter);
+
+      if (directionMode === 0) this.y += s;
+      if (directionMode === 1) this.y -= s;
+      if (directionMode === 2) this.baseX += s;
+      if (directionMode === 3) this.baseX -= s;
+      if (directionMode === 4) this.y += this.vy * dt * 60;
+
+      if (this.y > c.height + this.h) this.y = -this.h;
+      if (this.y < -this.h) this.y = c.height + this.h;
+      if (this.baseX > c.width + gridSize) this.baseX = -gridSize;
+      if (this.baseX < -gridSize) this.baseX = c.width + gridSize;
+    }
+    else if (lockMode === 'grid') {
+      if (directionMode === 0) this.baseY += s;
+      if (directionMode === 1) this.baseY -= s;
+      if (directionMode === 2) this.baseX += s;
+      if (directionMode === 3) this.baseX -= s;
+      if (directionMode === 4) {
+        this.baseX += this.vx * dt * 60;
+        this.baseY += this.vy * dt * 60;
+      }
+
+      this.x = this.baseX + rand(-gridJitter, gridJitter);
+      this.y = this.baseY + rand(-gridJitter, gridJitter);
+
+      if (this.baseX > c.width + this.w) this.baseX = -gridSize;
+      if (this.baseX < -gridSize) this.baseX = c.width + gridSize;
+      if (this.baseY > c.height + this.h) this.baseY = -gridSize;
+      if (this.baseY < -gridSize) this.baseY = c.height + gridSize;
+    }
+    else {
+      if (directionMode === 0) this.y += s;
+      if (directionMode === 1) this.y -= s;
+      if (directionMode === 2) this.x += s;
+      if (directionMode === 3) this.x -= s;
+      if (directionMode === 4) {
+        this.x += this.vx * dt * 60;
+        this.y += this.vy * dt * 60;
+      }
+
+      if (this.x > c.width + this.w) this.x = -this.w;
+      if (this.x < -this.w) this.x = c.width + this.w;
+      if (this.y > c.height + this.h) this.y = -this.h;
+      if (this.y < -this.h) this.y = c.height + this.h;
+    }
+
+    this.life -= dt;
+    this.age += dt;
+
+    if (this.life <= 0) {
+      this.reset();
+    }
+  }
+
+  draw() {
+    let alpha = 1;
+
+    if (fadeInSeconds > 0 && this.age < fadeInSeconds) {
+      alpha = this.age / fadeInSeconds;
+    }
+
+    if (fadeOutSeconds > 0 && this.life < fadeOutSeconds) {
+      alpha = Math.min(alpha, this.life / fadeOutSeconds);
+    }
+
+    const scale = 1 + pulseValue;
+
+    ctx.globalAlpha = clamp(alpha, 0, 1);
+    ctx.fillStyle = this.col;
+    ctx.fillRect(
+      this.x - (this.w * (scale - 1)) / 2,
+      this.y - (this.h * (scale - 1)) / 2,
+      this.w * scale,
+      this.h * scale
+    );
+    ctx.globalAlpha = 1;
+  }
+}
+
+function rebuildBlocks() {
+  blocks = [];
+  for (let i = 0; i < maxBlocks; i++) {
+    blocks.push(new Block());
+  }
+  syncHUD();
+}
+
+function buildPaletteUI() {
+  paletteGrid.innerHTML = '';
+  const allPalettes = getAllPalettes();
+
+  allPalettes.forEach((p, i) => {
+    const b = document.createElement('div');
+    b.className = 'palette-btn';
+    b.style.background = `linear-gradient(135deg, ${p.join(',')})`;
+    b.title = i === allPalettes.length - 1 ? 'Custom Palette' : `Palette ${i + 1}`;
+    b.onclick = () => {
+      setPaletteIndex(i);
+      rebuildBlocks();
+    };
+    paletteGrid.appendChild(b);
+  });
+
+  setPaletteIndex(paletteIndex);
+}
+
+function attachEvents() {
+  document.querySelectorAll('.dir-btn').forEach(btn => {
+    btn.addEventListener('click', () => setDirectionMode(parseInt(btn.dataset.dir, 10)));
+  });
+
+  document.querySelectorAll('.lock-btn').forEach(btn => {
+    btn.addEventListener('click', () => setLockMode(btn.dataset.lock));
+  });
+
+  document.getElementById('speed').oninput = e => speedBase = parseFloat(e.target.value);
+  document.getElementById('density').oninput = e => setDensity(parseInt(e.target.value, 10));
+  document.getElementById('avgSize').oninput = e => avgSize = parseFloat(e.target.value);
+  document.getElementById('sizeVariance').oninput = e => sizeVariance = parseFloat(e.target.value);
+  document.getElementById('fadeIn').oninput = e => fadeInSeconds = parseFloat(e.target.value);
+  document.getElementById('fadeOut').oninput = e => fadeOutSeconds = parseFloat(e.target.value);
+  document.getElementById('gridSize').oninput = e => gridSize = parseFloat(e.target.value);
+  document.getElementById('gridJitter').oninput = e => gridJitter = parseFloat(e.target.value);
+  document.getElementById('baseBPM').oninput = e => setBaseBPM(e.target.value);
+  document.getElementById('pulseAmount').oninput = e => pulseAmount = parseFloat(e.target.value);
+  document.getElementById('scanlineStrength').oninput = e => scanlineStrength = parseFloat(e.target.value);
+  document.getElementById('trailAlpha').oninput = e => trailAlpha = parseFloat(e.target.value);
+  document.getElementById('blendMode').oninput = e => blendMode = e.target.value;
+
+  document.getElementById('autoCycleDirection').onchange = e => autoCycleDirection = e.target.checked;
+  document.getElementById('autoCyclePalette').onchange = e => autoCyclePalette = e.target.checked;
+
+  document.querySelectorAll('.bpm-buttons button[data-multi]').forEach(btn => {
+    btn.addEventListener('click', () => multiplyBPM(parseFloat(btn.dataset.multi)));
+  });
+
+  document.getElementById('resetBeatBtn').onclick = resetBeat;
+
+  document.getElementById('pauseBtn').onclick = () => {
+    paused = !paused;
+    document.getElementById('pauseBtn').textContent = paused ? 'Play' : 'Pause';
+    document.getElementById('pauseBtn').classList.toggle('active', paused);
+  };
+
+  document.getElementById('fullscreenBtn').onclick = toggleFullscreen;
+  document.getElementById('randomiseBtn').onclick = randomiseSettings;
+  document.getElementById('exportPresetBtn').onclick = exportPreset;
+  document.getElementById('importPresetBtn').onclick = () => {
+    document.getElementById('importPresetInput').click();
+  };
+  document.getElementById('importPresetInput').addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    if (file) importPresetFromFile(file);
+    e.target.value = '';
+  });
+  document.getElementById('exportBtn').onclick = exportFrame;
+
+  document.getElementById('resetBtn').onclick = () => {
+    speedBase = 1;
+    maxBlocks = 220;
+    avgSize = 80;
+    sizeVariance = 0.6;
+    directionMode = 0;
+    lockMode = 'free';
+    gridSize = 100;
+    gridJitter = 10;
+    fadeInSeconds = 0;
+    fadeOutSeconds = 0;
+    scanlineStrength = 0;
+    trailAlpha = 0.25;
+    blendMode = 'source-over';
+    baseBPM = 120;
+    bpm = 120;
+    autoCycleDirection = false;
+    autoCyclePalette = false;
+    pulseAmount = 0;
+    pulseValue = 0;
+    paused = false;
+    paletteIndex = 0;
+
+    customColour1.value = '#00ffff';
+    customColour2.value = '#ff00ff';
+    customColour3.value = '#ffffff';
+
+    document.getElementById('pauseBtn').textContent = 'Pause';
+    document.getElementById('pauseBtn').classList.remove('active');
+
+    buildPaletteUI();
+    rebuildBlocks();
+    syncUI();
+    clearCanvas();
+  };
+
+  [customColour1, customColour2, customColour3].forEach(input => {
+    input.addEventListener('input', () => {
+      const customIndex = getAllPalettes().length - 1;
+      buildPaletteUI();
+      if (paletteIndex === customIndex) rebuildBlocks();
+    });
+  });
+
+  window.addEventListener('keydown', e => {
+    if (e.target.matches('input,select,textarea')) return;
+
+    if (e.code === 'Space') {
+      e.preventDefault();
+      document.getElementById('pauseBtn').click();
+    }
+    if (e.key.toLowerCase() === 'f') toggleFullscreen();
+    if (e.key.toLowerCase() === 'r') randomiseSettings();
+    if (e.key.toLowerCase() === 'e') exportFrame();
+    if (e.key.toLowerCase() === 'd') setDirectionMode((directionMode + 1) % 5);
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      panel.classList.toggle('open');
+    }
+  });
+}
+
+function drawScanlines() {
+  if (scanlineStrength <= 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = `rgba(0,0,0,${scanlineStrength})`;
+  for (let y = 0; y < c.height; y += 2) {
+    ctx.fillRect(0, y, c.width, 1);
+  }
+  ctx.restore();
+}
+
+function draw(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = `rgba(0,0,0,${trailAlpha})`;
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.restore();
+
+  const beatMs = (60 / Math.max(0.0001, bpm)) * 1000;
+  if (!paused && (now - lastBeat > beatMs)) {
+    lastBeat = now;
+    pulseValue = pulseAmount;
+    bpmIndicator.style.background = '#0ff';
+    setTimeout(() => bpmIndicator.style.background = '#333', 100);
+
+    if (autoCycleDirection) {
+      setDirectionMode(randomIntExcept(5, directionMode));
+    }
+
+    if (autoCyclePalette) {
+      setPaletteIndex(randomIntExcept(getAllPalettes().length, paletteIndex));
+    }
+  }
+
+  pulseValue *= 0.88;
+
+  ctx.save();
+  ctx.globalCompositeOperation = blendMode;
+
+  if (!paused) {
+    for (const b of blocks) {
+      b.move(dt);
+      b.draw();
+    }
+  } else {
+    for (const b of blocks) b.draw();
+  }
+
+  ctx.restore();
+
+  drawScanlines();
+  syncHUD();
+  requestAnimationFrame(draw);
+}
+
+buildPaletteUI();
+attachEvents();
+rebuildBlocks();
+syncUI();
+clearCanvas();
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
+'''
+
+path = '/mnt/data/glitch-cubes-generator-consolidated-update.html'
+with open(path, 'w', encoding='utf-8') as f:
+    f.write(html_content)
+
+print(path)
