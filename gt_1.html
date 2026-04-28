@@ -288,7 +288,24 @@ body.panel-mode #panel h3{font-size:11px;margin-top:18px;padding:7px 0 5px}
 body.panel-mode .val{font-size:11.5px}
 body.panel-mode .bbtns button{padding:7px 0;font-size:11.5px}
 
-/* ── NDI / Network Out ── */
+/* ── MIDI Clock ── */
+.clock-beats{display:flex;gap:5px;margin:6px 0 4px;align-items:center}
+.clock-beat-dot{
+  width:10px;height:10px;border-radius:50%;
+  background:var(--ctrl-bg);border:1px solid var(--ctrl-bdr);
+  transition:background .06s,box-shadow .06s;flex-shrink:0;
+}
+.clock-beat-dot.active{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.clock-beat-dot.dimmed{background:color-mix(in srgb,var(--accent) 30%,var(--ctrl-bg))}
+.clock-bpm-display{
+  flex:1;text-align:right;font-family:'Courier New',monospace;
+  font-size:16px;font-variant-numeric:tabular-nums;color:var(--val);
+  letter-spacing:.05em;
+}
+.clock-bpm-display.inactive{color:var(--slbl);font-size:11px}
+.jitter-bar{height:2px;background:var(--range-track);border-radius:1px;overflow:hidden;margin:3px 0 5px}
+.jitter-fill{height:100%;width:0;border-radius:1px;transition:width .2s,background .2s;background:var(--range-fill)}
+.clock-source-note{font-size:7.5px;color:var(--slbl);line-height:1.5;margin-top:4px}
 .ndi-url-row{display:flex;gap:3px;margin:5px 0}
 .ndi-url-row input{flex:1;background:var(--ctrl-bg);border:1px solid var(--ctrl-bdr);color:var(--text-hi);padding:3px 5px;font-family:inherit;font-size:8.5px;outline:none;cursor:text;min-width:0}
 .ndi-qr{margin:7px auto 0;display:none;text-align:center}
@@ -619,7 +636,28 @@ body.panel-mode #pm-status{display:flex}
   <div class="sep"></div>
   <div class="slbl">MIDI Clock Sync</div>
   <div class="ctrl"><label><span class="lname">Enable Clock Sync</span><input id="midiClockSync" type="checkbox"/></label></div>
-  <div id="midiClockStatus" style="font-size:8.5px;color:var(--slbl);margin:2px 0">Clock: waiting…</div>
+  <!-- Beat phase indicator: 4 dots = 4 quarter notes per bar, BPM readout -->
+  <div class="clock-beats">
+    <div class="clock-beat-dot" id="cbd0"></div>
+    <div class="clock-beat-dot" id="cbd1"></div>
+    <div class="clock-beat-dot" id="cbd2"></div>
+    <div class="clock-beat-dot" id="cbd3"></div>
+    <div class="clock-bpm-display inactive" id="clockBpmDisplay">— BPM</div>
+  </div>
+  <!-- Jitter / signal quality bar: low jitter = full green, high jitter = shorter/orange -->
+  <div style="display:flex;justify-content:space-between;font-size:7.5px;color:var(--slbl);margin-bottom:2px">
+    <span>Clock quality</span><span id="clockJitterLabel">—</span>
+  </div>
+  <div class="jitter-bar"><div class="jitter-fill" id="jitterFill"></div></div>
+  <div id="midiClockStatus" style="font-size:8.5px;color:var(--slbl);margin:2px 0">Clock: not active.</div>
+  <!-- Latency compensation: shift beat triggers earlier to compensate for interface latency -->
+  <div class="ctrl"><label><span class="lname">Latency Comp (ms)</span><span class="val" id="vClockLatency">0</span></label><input id="clockLatency" type="range" min="-30" max="30" step="1" value="0"/></div>
+  <div class="clock-source-note">
+    <b>Ableton Live:</b> Preferences → MIDI → enable Clock Send on your interface output<br>
+    <b>Traktor:</b> Preferences → MIDI Clock → Output → enable clock on your MIDI port<br>
+    <b>Resolume:</b> Output → MIDI → Send Clock → select port<br>
+    Web MIDI sees hardware ports only. Use a virtual MIDI port (e.g. loopMIDI on Windows, IAC Driver on macOS) if the source is in the same machine.
+  </div>
   <div class="sep"></div>
   <div id="midiStatus">MIDI not enabled.</div>
   <div id="midiPort"></div>
@@ -707,6 +745,11 @@ body.panel-mode #pm-status{display:flex}
     <button class="btn learnable" id="randomiseBtn" data-midi-id="randomiseBtn">Randomise</button>
     <button class="btn" id="toggleHudBtn">HUD: On</button>
   </div>
+  <div class="row">
+    <button class="btn" id="undoBtn" disabled title="Undo (Ctrl+Z)">↩ Undo</button>
+    <button class="btn" id="redoBtn" disabled title="Redo (Ctrl+Y / Ctrl+Shift+Z)">↪ Redo</button>
+  </div>
+  <div id="undoStatus" style="font-size:8px;color:var(--slbl);margin:1px 0 4px;text-align:center">No history</div>
   <button class="pbtn" id="popoutBtn">⧉ Open Performance Panel</button>
   <button class="pbtn learnable" id="resetBtn" data-midi-id="resetBtn">Reset All</button>
   <div class="slbl" style="margin-top:9px">Keyboard</div>
@@ -716,6 +759,7 @@ body.panel-mode #pm-status{display:flex}
     <span class="k"><b>D</b> dir</span><span class="k"><b>G</b> glitch</span>
     <span class="k"><b>H</b> HUD</span><span class="k"><b>1–9</b> scenes</span>
     <span class="k"><b>Tab/`</b> panel</span>
+    <span class="k"><b>Ctrl+Z</b> undo</span><span class="k"><b>Ctrl+Y</b> redo</span>
   </div>
 </div>
 </div>
@@ -990,8 +1034,8 @@ let morphTime=2,morphCurve='ease';
 let morphActive=false,morphStart=null,morphEnd=null,morphT=0,morphTotal=0;
 // Scene that was active before morph (for display)
 let morphTargetScene=-1;
-// MIDI clock
-let midiClockSync=false,midiClockTicks=[],midiClockBPM=0;
+// MIDI clock sync state (see onMidiClock / parseMidi for full implementation)
+let midiClockSync=false, midiClockRunning=false, midiClockTickCount=0, midiClockBPM=0, midiClockLatency=0;
 
 const DIR_SYMS=['↓','↑','→','←','✕','↗','↖','↙','↘'];
 
@@ -1056,21 +1100,87 @@ function hexToRgb(hex){const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(
 function rgbToHex(r,g,b){return '#'+[r,g,b].map(v=>Math.round(clamp(v,0,255)).toString(16).padStart(2,'0')).join('');}
 function lerpHex(h1,h2,t){const a=hexToRgb(h1||'#000000'),b=hexToRgb(h2||'#000000');return rgbToHex(lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t));}
 
+/* ── Explicit field lists (no eval) ── */
 const NUMERIC_FIELDS=['speedBase','avgSize','sizeVariance','gridSize','gridJitter','fadeInSeconds','fadeOutSeconds','trailAlpha','glowAmount','chromaAmount','glitchRate','vignetteAmount','scanlineStrength','outlineWidth','roundness','rotationSpeed','pulseAmount','baseBPM','bpm','attractorStrength','extremeAmount','xFreezeRate','xBlockSize','xChromaFault','feedbackAmount','feedbackZoom','feedbackRotate','feedbackShiftX','feedbackBlend_amt','pixSortAmount','pixSortThresh','speedBurst','burstDecay'];
-const DISCRETE_FIELDS=['directionMode','lockMode','shapeMode','shapeType','blendMode','feedbackBlend','pixSortDir','pixSortBy','paletteIndex'];
+const DISCRETE_FIELDS=['directionMode','lockMode','shapeMode','shapeType','blendMode','feedbackBlend','pixSortDir','pixSortBy','paletteIndex','beatDiv'];
 const BOOL_FIELDS=['autoCycleDirection','autoCyclePalette','beatFlash','beatGlitch','beatCycleShape','beatCycleBlend','beatRandColour','beatReverseDir','beatRandSize','beatExtremeKick','beatFeedbackKick','beatPixSortKick','attractorMode','perfMode'];
+
+/* ── Getter map: field name → function that returns current value ──
+   One entry per field — explicit, minifier-safe, strict-mode safe.  */
+const NUMERIC_GETTERS={
+  speedBase:        ()=>speedBase,
+  avgSize:          ()=>avgSize,
+  sizeVariance:     ()=>sizeVariance,
+  gridSize:         ()=>gridSize,
+  gridJitter:       ()=>gridJitter,
+  fadeInSeconds:    ()=>fadeInSeconds,
+  fadeOutSeconds:   ()=>fadeOutSeconds,
+  trailAlpha:       ()=>trailAlpha,
+  glowAmount:       ()=>glowAmount,
+  chromaAmount:     ()=>chromaAmount,
+  glitchRate:       ()=>glitchRate,
+  vignetteAmount:   ()=>vignetteAmount,
+  scanlineStrength: ()=>scanlineStrength,
+  outlineWidth:     ()=>outlineWidth,
+  roundness:        ()=>roundness,
+  rotationSpeed:    ()=>rotationSpeed,
+  pulseAmount:      ()=>pulseAmount,
+  baseBPM:          ()=>baseBPM,
+  bpm:              ()=>bpm,
+  attractorStrength:()=>attractorStrength,
+  extremeAmount:    ()=>extremeAmount,
+  xFreezeRate:      ()=>xFreezeRate,
+  xBlockSize:       ()=>xBlockSize,
+  xChromaFault:     ()=>xChromaFault,
+  feedbackAmount:   ()=>feedbackAmount,
+  feedbackZoom:     ()=>feedbackZoom,
+  feedbackRotate:   ()=>feedbackRotate,
+  feedbackShiftX:   ()=>feedbackShiftX,
+  feedbackBlend_amt:()=>feedbackBlend_amt,
+  pixSortAmount:    ()=>pixSortAmount,
+  pixSortThresh:    ()=>pixSortThresh,
+  speedBurst:       ()=>speedBurst,
+  burstDecay:       ()=>burstDecay,
+};
+const DISCRETE_GETTERS={
+  directionMode:()=>directionMode,
+  lockMode:     ()=>lockMode,
+  shapeMode:    ()=>shapeMode,
+  shapeType:    ()=>shapeType,
+  blendMode:    ()=>blendMode,
+  feedbackBlend:()=>feedbackBlend,
+  pixSortDir:   ()=>pixSortDir,
+  pixSortBy:    ()=>pixSortBy,
+  paletteIndex: ()=>paletteIndex,
+  beatDiv:      ()=>beatDiv,
+};
+const BOOL_GETTERS={
+  autoCycleDirection:()=>autoCycleDirection,
+  autoCyclePalette:  ()=>autoCyclePalette,
+  beatFlash:         ()=>beatFlash,
+  beatGlitch:        ()=>beatGlitch,
+  beatCycleShape:    ()=>beatCycleShape,
+  beatCycleBlend:    ()=>beatCycleBlend,
+  beatRandColour:    ()=>beatRandColour,
+  beatReverseDir:    ()=>beatReverseDir,
+  beatRandSize:      ()=>beatRandSize,
+  beatExtremeKick:   ()=>beatExtremeKick,
+  beatFeedbackKick:  ()=>beatFeedbackKick,
+  beatPixSortKick:   ()=>beatPixSortKick,
+  attractorMode:     ()=>attractorMode,
+  perfMode:          ()=>perfMode,
+};
 
 function getNumericSnapshot(){
   const s={};
-  NUMERIC_FIELDS.forEach(k=>{s[k]=eval(k);}); // simple snapshot from current state
-  // Custom colours
-  s._cc1=cc1.value;s._cc2=cc2.value;s._cc3=cc3.value;
+  NUMERIC_FIELDS.forEach(k=>{ s[k]=NUMERIC_GETTERS[k](); });
+  s._cc1=cc1.value; s._cc2=cc2.value; s._cc3=cc3.value;
   return s;
 }
 function getDiscreteSnapshot(){
   const s={};
-  DISCRETE_FIELDS.forEach(k=>{s[k]=eval(k);});
-  BOOL_FIELDS.forEach(k=>{s[k]=eval(k);});
+  DISCRETE_FIELDS.forEach(k=>{ s[k]=DISCRETE_GETTERS[k](); });
+  BOOL_FIELDS.forEach(k=>{ s[k]=BOOL_GETTERS[k](); });
   s.maxBlocks=maxBlocks;
   return s;
 }
@@ -1172,27 +1282,32 @@ function captureScene(){
 function applySceneInstant(scene){
   if(!scene)return;
   const n=scene.numeric, d=scene.discrete;
-  // Apply numeric
+  const prevMaxBlocks=maxBlocks; // capture before any field application
+  // Apply numeric — uses applyNumericField switch (no eval)
   if(n){
-    NUMERIC_FIELDS.forEach(k=>{if(k in n){
-      // Assign to correct variable
-      eval(k+'=n[k]');
-    }});
-    if(n._cc1)cc1.value=n._cc1;
-    if(n._cc2)cc2.value=n._cc2;
-    if(n._cc3)cc3.value=n._cc3;
+    NUMERIC_FIELDS.forEach(k=>{ if(k in n) applyNumericField(k, n[k]); });
+    if(n._cc1) cc1.value=n._cc1;
+    if(n._cc2) cc2.value=n._cc2;
+    if(n._cc3) cc3.value=n._cc3;
   }
+  // Apply discrete + booleans — uses applyDiscreteField / applyBoolField switches (no eval)
   if(d){
-    DISCRETE_FIELDS.forEach(k=>{if(k in d)eval(k+'=d[k]');});
-    BOOL_FIELDS.forEach(k=>{if(k in d)eval(k+'=d[k]');});
-    if(d.maxBlocks)maxBlocks=d.maxBlocks;
+    DISCRETE_FIELDS.forEach(k=>{ if(k in d) applyDiscreteField(k, d[k]); });
+    BOOL_FIELDS.forEach(k=>{    if(k in d) applyBoolField(k, d[k]); });
+    if(d.maxBlocks) maxBlocks=d.maxBlocks;
   }
-  buildPalUI();rebuildBlocks();if(rotationSpeed===0)resetRotNow();syncUI();scheduleBC();
+  buildPalUI();
+  // Only rebuild the block array if the count actually changed — avoids the
+  // visible flash and wasted allocation when recalling a scene at the same density.
+  if(maxBlocks !== prevMaxBlocks) rebuildBlocks();
+  if(rotationSpeed===0) resetRotNow();
+  syncUI(); scheduleBC();
 }
 
 function recallScene(idx){
   if(idx<0||idx>15)return;
   const scene=scenes[idx];if(!scene){document.getElementById('sceneStatus').textContent=`Scene ${idx+1} is empty.`;return;}
+  pushHistory(); // snapshot before overwriting state
   activeScene=idx;
   if(morphTime<=0){
     applySceneInstant(scene);
@@ -1208,6 +1323,7 @@ function recallScene(idx){
 }
 
 function storeScene(idx){
+  pushHistory(); // storeScene changes the scenes[] array — undoable
   scenes[idx]=captureScene();
   activeScene=idx;
   updateSceneGrid();
@@ -1217,6 +1333,7 @@ function storeScene(idx){
 
 function clearScene(idx){
   if(idx<0)return;
+  pushHistory();
   scenes[idx]=null;
   if(activeScene===idx)activeScene=-1;
   updateSceneGrid();
@@ -1274,6 +1391,7 @@ function applyDiscreteField(k,v){
     case 'pixSortBy': pixSortBy=v; document.querySelectorAll('.pssort').forEach(b=>b.classList.toggle('active',b.dataset.pssort===v)); break;
     case 'paletteIndex': setPalIdx(v); break;
     case 'maxBlocks': maxBlocks=v; break;
+    case 'beatDiv': beatDiv=clamp(parseInt(v),1,8); setSV('beatDiv','vBeatDiv',beatDiv,0); break;
   }
 }
 
@@ -1298,16 +1416,25 @@ function tickMorph(dt){
     morphStart._discreteSnapped=true;
     const d=morphEnd.discrete;
     if(d)DISCRETE_FIELDS.forEach(k=>{if(k in d)applyDiscreteField(k,d[k]);});
-    if(morphEnd.discrete?.maxBlocks&&morphEnd.discrete.maxBlocks!==maxBlocks){maxBlocks=morphEnd.discrete.maxBlocks;rebuildBlocks();}
+    if(morphEnd.discrete?.maxBlocks&&morphEnd.discrete.maxBlocks!==maxBlocks){
+      maxBlocks=morphEnd.discrete.maxBlocks;rebuildBlocks();
+    }
   }
   // Update morph bar
   const fill=document.getElementById('morphFill');if(fill)fill.style.width=(rawT*100)+'%';
   if(rawT>=1){
+    // Save reference BEFORE nulling — discrete/bool snap uses it below
+    const finalDiscrete = morphEnd?.discrete ?? null;
     morphActive=false;morphStart=null;morphEnd=null;morphT=0;
     if(fill)fill.style.width='0%';
-    // Ensure final state
-    const d=morphEnd?.discrete;
-    if(d){DISCRETE_FIELDS.forEach(k=>{if(k in d)applyDiscreteField(k,d[k]);});BOOL_FIELDS.forEach(k=>{if(k in d)applyBoolField(k,d[k]);});}
+    // Ensure final discrete + bool state is exactly the target scene's values
+    if(finalDiscrete){
+      DISCRETE_FIELDS.forEach(k=>{if(k in finalDiscrete)applyDiscreteField(k,finalDiscrete[k]);});
+      BOOL_FIELDS.forEach(k=>{if(k in finalDiscrete)applyBoolField(k,finalDiscrete[k]);});
+      if(finalDiscrete.maxBlocks&&finalDiscrete.maxBlocks!==maxBlocks){
+        maxBlocks=finalDiscrete.maxBlocks;rebuildBlocks();
+      }
+    }
     activeScene=morphTargetScene;updateSceneGrid();
     document.getElementById('sceneStatus').textContent=`Scene ${morphTargetScene+1} loaded.`;
     syncUI();scheduleBC();
@@ -1423,70 +1550,220 @@ function applyFeedback(dt,amt){
 }
 
 /* ══════════════════════════════════════════════════
-   PIXEL SORT
+   PIXEL SORT — Web Worker + stripe getImageData
+   
+   Key changes vs naive approach:
+   1. Worker: sort computation is fully off the main thread
+   2. Stripe reads: getImageData/putImageData only touches the
+      rows/cols being sorted (not the full canvas).
+      At 1920×1080, 20-row stripe = 150KB vs 8MB full canvas.
+   3. Hard cap: lines-per-frame is capped by resolution so
+      total byte transfer stays under ~200KB/frame regardless
+      of the UI slider value.
+   4. Non-blocking: if the worker is busy we skip that frame —
+      no stall, no queue buildup.
 ══════════════════════════════════════════════════ */
-let psRowCursor=0;
-let pixSortKickAmount=0;
-function pixelBrightness(r,g,b){return(r*299+g*587+b*114)/1000/255;}
-function pixelHue(r,g,b){const max=Math.max(r,g,b),min=Math.min(r,g,b);if(max===min)return 0;const d=max-min;if(max===r)return((g-b)/d+6)%6;if(max===g)return(b-r)/d+2;return(r-g)/d+4;}
-function pixelSaturation(r,g,b){const max=Math.max(r,g,b),min=Math.min(r,g,b);if(max===0)return 0;return(max-min)/max;}
-function getSortValue(r,g,b){
-  if(pixSortBy==='hue')return pixelHue(r,g,b);
-  if(pixSortBy==='saturation')return pixelSaturation(r,g,b);
-  return pixelBrightness(r,g,b);
+
+/* ── Worker source (embedded as blob so single-file stays single-file) ── */
+const _PS_WORKER_SRC = `
+self.onmessage = function(msg) {
+  const {buf, sw, sh, dir, sortBy, threshold} = msg.data;
+  const d = new Uint8ClampedArray(buf);
+
+  function val(r,g,b){
+    if(sortBy==='hue'){
+      const mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+      if(mx===mn)return 0;
+      const dv=mx-mn;
+      if(mx===r)return((g-b)/dv+6)%6;
+      if(mx===g)return(b-r)/dv+2;
+      return(r-g)/dv+4;
+    }
+    if(sortBy==='saturation'){
+      const mx=Math.max(r,g,b);
+      return mx===0?0:(mx-Math.min(r,g,b))/mx;
+    }
+    return(r*299+g*587+b*114)/255000; /* brightness */
+  }
+
+  if(dir==='h'){
+    /* Stripe layout: sw=canvas width, sh=rowCount */
+    for(let row=0;row<sh;row++){
+      let segStart=-1;
+      for(let x=0;x<=sw;x++){
+        const i=(row*sw+Math.min(x,sw-1))*4;
+        const v=x<sw?val(d[i],d[i+1],d[i+2]):-1;
+        if(v>threshold&&segStart<0){segStart=x;}
+        else if((v<=threshold||x===sw)&&segStart>=0&&x-segStart>2){
+          /* Build object array once, sort it, write back */
+          const objs=[];
+          for(let sx=segStart;sx<x;sx++){
+            const si=(row*sw+sx)*4;
+            objs.push({r:d[si],g:d[si+1],b:d[si+2],a:d[si+3],v:val(d[si],d[si+1],d[si+2])});
+          }
+          objs.sort((a,b)=>a.v-b.v);
+          for(let sx=segStart;sx<x;sx++){
+            const si=(row*sw+sx)*4,p=objs[sx-segStart];
+            d[si]=p.r;d[si+1]=p.g;d[si+2]=p.b;d[si+3]=p.a;
+          }
+          segStart=-1;
+        }
+      }
+    }
+  } else {
+    /* Vertical stripe: sw=colCount, sh=canvas height */
+    for(let col=0;col<sw;col++){
+      let segStart=-1;
+      for(let y=0;y<=sh;y++){
+        const i=(Math.min(y,sh-1)*sw+col)*4;
+        const v=y<sh?val(d[i],d[i+1],d[i+2]):-1;
+        if(v>threshold&&segStart<0){segStart=y;}
+        else if((v<=threshold||y===sh)&&segStart>=0&&y-segStart>2){
+          const objs=[];
+          for(let sy=segStart;sy<y;sy++){const si=(sy*sw+col)*4;objs.push({r:d[si],g:d[si+1],b:d[si+2],a:d[si+3],v:val(d[si],d[si+1],d[si+2])});}
+          objs.sort((a,b)=>a.v-b.v);
+          for(let sy=segStart;sy<y;sy++){const si=(sy*sw+col)*4,p=objs[sy-segStart];d[si]=p.r;d[si+1]=p.g;d[si+2]=p.b;d[si+3]=p.a;}
+          segStart=-1;
+        }
+      }
+    }
+  }
+
+  self.postMessage({buf:d.buffer,sw,sh,dir},  [d.buffer]);
+};
+`;
+
+/* Create worker once at startup */
+let psWorker = null;
+let psWorkerBusy = false;
+let psPendingResult = null; // {imgData, x, y} — ready to putImageData
+let psLineCursor = 0;
+let pixSortKickAmount = 0;
+
+function initPixSortWorker(){
+  try{
+    const blob = new Blob([_PS_WORKER_SRC], {type:'application/javascript'});
+    psWorker = new Worker(URL.createObjectURL(blob));
+    psWorker.onmessage = e => {
+      const {buf, sw, sh, dir} = e.data;
+      // Store result for next frame's apply step
+      const id = new ImageData(new Uint8ClampedArray(buf), sw, sh);
+      psPendingResult = {id, x: dir==='h'?0:psLastColStart, y: dir==='h'?psLastRowStart:0};
+      psWorkerBusy = false;
+    };
+    psWorker.onerror = err => {
+      console.warn('Pixel sort worker error:', err.message);
+      psWorkerBusy = false;
+    };
+  }catch(e){
+    psWorker = null; // Worker unavailable, will fall back to sync
+  }
+}
+
+let psLastRowStart = 0;
+let psLastColStart = 0;
+
+/* Resolution-adaptive hard cap:
+   Target <150KB of pixel data per frame (GPU readback budget).
+   bytes = lineCount × lineLength × 4
+   → lineCount = 150,000 / (lineLength × 4) */
+function psLineCap(lineLength){
+  return Math.max(1, Math.min(pixSortRows, Math.floor(150000 / (lineLength * 4))));
 }
 
 function applyPixelSort(amt){
-  if(!ctx)return;
-  if(pixSortKickAmount>0)pixSortKickAmount=Math.max(0,pixSortKickAmount-.05);
-  const totalAmt=clamp(amt+pixSortKickAmount,0,1);
-  if(totalAmt<=0)return;
-  const threshold=Math.max(0,pixSortThresh*(1-pixSortKickAmount*.5));
-  const rowsToSort=Math.round(pixSortRows*totalAmt);
-  if(rowsToSort<=0)return;
-  const w=c.width,h=c.height;
+  if(!ctx) return;
+
+  /* Decay kick */
+  if(pixSortKickAmount > 0) pixSortKickAmount = Math.max(0, pixSortKickAmount - 0.05);
+  const totalAmt = clamp(amt + pixSortKickAmount, 0, 1);
+
+  /* Step 1: apply any pending sorted stripe from last frame (zero-cost) */
+  if(psPendingResult){
+    try{ ctx.putImageData(psPendingResult.id, psPendingResult.x, psPendingResult.y); }catch(e){}
+    psPendingResult = null;
+  }
+
+  if(totalAmt <= 0) return;
+  if(psWorkerBusy) return;   /* worker still sorting — skip this frame */
+
+  const threshold = Math.max(0, pixSortThresh * (1 - pixSortKickAmount * 0.5));
+  const isH = pixSortDir === 'h';
+  const cw = c.width, ch = c.height;
+
   let imgData;
-  try{imgData=ctx.getImageData(0,0,w,h);}catch(e){return;}
-  const d=imgData.data;
-  const isH=pixSortDir==='h';
-  const dim=isH?h:w;
-  let processed=0;
-  for(let pass=0;pass<rowsToSort&&processed<rowsToSort;pass++){
-    const line=(psRowCursor+pass)%dim;
-    // Find segments above threshold and sort them
+  if(isH){
+    const cap = psLineCap(cw);
+    const rowCount = Math.round(cap * totalAmt);
+    if(rowCount <= 0) return;
+    const rowStart = psLineCursor % ch;
+    const actualRows = Math.min(rowCount, ch - rowStart);
+    psLastRowStart = rowStart;
+    try{ imgData = ctx.getImageData(0, rowStart, cw, actualRows); }catch(e){ return; }
+    psLineCursor = (rowStart + actualRows) % ch;
+  } else {
+    const cap = psLineCap(ch);
+    const colCount = Math.round(cap * totalAmt);
+    if(colCount <= 0) return;
+    const colStart = psLineCursor % cw;
+    const actualCols = Math.min(colCount, cw - colStart);
+    psLastColStart = colStart;
+    try{ imgData = ctx.getImageData(colStart, 0, actualCols, ch); }catch(e){ return; }
+    psLineCursor = (colStart + actualCols) % cw;
+  }
+
+  if(psWorker){
+    /* Off-thread path: transfer buffer (zero-copy) */
+    psWorkerBusy = true;
+    psWorker.postMessage(
+      {buf: imgData.data.buffer, sw: imgData.width, sh: imgData.height,
+       dir: pixSortDir, sortBy: pixSortBy, threshold},
+      [imgData.data.buffer]   // transferable — no copy
+    );
+  } else {
+    /* Fallback: sync sort on main thread (Worker unavailable) */
+    _psSortSync(imgData.data, imgData.width, imgData.height, threshold);
+    try{
+      const x = isH ? 0 : psLastColStart;
+      const y = isH ? psLastRowStart : 0;
+      ctx.putImageData(imgData, x, y);
+    }catch(e){}
+  }
+}
+
+function _psSortSync(d, sw, sh, threshold){
+  function val(r,g,b){
+    if(pixSortBy==='hue'){const mx=Math.max(r,g,b),mn=Math.min(r,g,b);if(mx===mn)return 0;const dv=mx-mn;if(mx===r)return((g-b)/dv+6)%6;if(mx===g)return(b-r)/dv+2;return(r-g)/dv+4;}
+    if(pixSortBy==='saturation'){const mx=Math.max(r,g,b);return mx===0?0:(mx-Math.min(r,g,b))/mx;}
+    return(r*299+g*587+b*114)/255000;
+  }
+  const isH = pixSortDir==='h';
+  const outer = isH ? sh : sw;
+  const inner = isH ? sw : sh;
+  for(let row=0;row<outer;row++){
     let segStart=-1;
-    const lineLen=isH?w:h;
-    for(let x=0;x<=lineLen;x++){
-      let i;
-      if(isH){i=(line*w+Math.min(x,lineLen-1))*4;}
-      else{i=(Math.min(x,lineLen-1)*w+line)*4;}
-      const brightness=x<lineLen?pixelBrightness(d[i],d[i+1],d[i+2]):-1;
-      if(brightness>threshold&&segStart<0){segStart=x;}
-      else if((brightness<=threshold||x===lineLen)&&segStart>=0&&x-segStart>2){
-        const seg=[];
-        for(let sx=segStart;sx<x;sx++){
-          let si=isH?(line*w+sx)*4:(sx*w+line)*4;
-          seg.push({r:d[si],g:d[si+1],b:d[si+2],a:d[si+3]});
-        }
-        seg.sort((a,b)=>getSortValue(a.r,a.g,a.b)-getSortValue(b.r,b.g,b.b));
-        for(let sx=segStart;sx<x;sx++){
-          let si=isH?(line*w+sx)*4:(sx*w+line)*4;
-          const p=seg[sx-segStart];
-          d[si]=p.r;d[si+1]=p.g;d[si+2]=p.b;d[si+3]=p.a;
-        }
+    for(let x=0;x<=inner;x++){
+      const i=isH?(row*sw+Math.min(x,inner-1))*4:(Math.min(x,inner-1)*sw+row)*4;
+      const v=x<inner?val(d[i],d[i+1],d[i+2]):-1;
+      if(v>threshold&&segStart<0){segStart=x;}
+      else if((v<=threshold||x===inner)&&segStart>=0&&x-segStart>2){
+        const objs=[];
+        for(let sx=segStart;sx<x;sx++){const si=isH?(row*sw+sx)*4:(sx*sw+row)*4;objs.push({r:d[si],g:d[si+1],b:d[si+2],a:d[si+3],v:val(d[si],d[si+1],d[si+2])});}
+        objs.sort((a,b)=>a.v-b.v);
+        for(let sx=segStart;sx<x;sx++){const si=isH?(row*sw+sx)*4:(sx*sw+row)*4,p=objs[sx-segStart];d[si]=p.r;d[si+1]=p.g;d[si+2]=p.b;d[si+3]=p.a;}
         segStart=-1;
       }
     }
-    processed++;
   }
-  psRowCursor=(psRowCursor+rowsToSort)%dim;
-  ctx.putImageData(imgData,0,0);
 }
 
 /* ══════════════════════════════════════════════════
    GLITCH STRIPS
 ══════════════════════════════════════════════════ */
 const glitchSrc=document.createElement('canvas');const glitchCtx=glitchSrc.getContext('2d');
+// Track last known size so we only reset the backing store on an actual resize,
+// not on every frame that happens to have active strips.
+let glitchSrcW=0, glitchSrcH=0;
 function triggerGlitch(){
   if(!ctx)return;
   const n=Math.floor(rand(1,5));
@@ -1494,7 +1771,12 @@ function triggerGlitch(){
 }
 function applyGlitchStrips(dt){
   if(!glitchStrips.length||!ctx)return;
-  glitchSrc.width=c.width;glitchSrc.height=c.height;glitchCtx.drawImage(c,0,0);
+  // Only reassign .width/.height when the canvas has genuinely changed size.
+  // Assigning .width even to the same value clears the canvas and can trigger
+  // a backing-store reallocation in some browsers.
+  if(glitchSrc.width!==c.width){glitchSrc.width=c.width; glitchSrcW=c.width;}
+  if(glitchSrc.height!==c.height){glitchSrc.height=c.height; glitchSrcH=c.height;}
+  glitchCtx.drawImage(c,0,0);
   ctx.save();ctx.globalCompositeOperation='source-over';
   glitchStrips=glitchStrips.filter(s=>{
     s.age+=dt;if(s.age>s.dur)return false;
@@ -1653,9 +1935,15 @@ function draw(now){
   // Trail clear
   ctx.save();ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;
   ctx.fillStyle=`rgba(0,0,0,${effTrail})`;ctx.fillRect(0,0,c.width,c.height);ctx.restore();
-  // Beat
-  const beatMs=(60/Math.max(.0001,bpm))*1000;
-  if(!paused&&now-lastBeat>beatMs){lastBeat=now;fireBeatActions();}
+  // ── Beat clock: time-based only when MIDI clock sync is OFF ──
+  // When midiClockSync is on, beats are fired phase-locked from onMidiClock()
+  // to stay aligned to the MIDI grid. Using both would cause double-firing.
+  if(!midiClockSync || !midiClockRunning) {
+    const beatMs=(60/Math.max(.0001,bpm))*1000;
+    if(!paused&&now-lastBeat>beatMs){lastBeat=now;fireBeatActions();}
+  }
+  // Update clock UI display (throttled internally to ~12Hz)
+  _updateClockUI(now);
   pulseValue*=.86;flashAlpha=Math.max(0,flashAlpha-dt*5);
   const gr=audioEnabled?effGlitch:glitchRate;
   if(!paused&&!perfMode&&gr>0&&Math.random()<gr*dt*1.8)triggerGlitch();
@@ -1711,7 +1999,10 @@ function sliderPct(el){const pct=clamp(((parseFloat(el.value)-parseFloat(el.min)
 function attachSlider(id,vid,dec,fn){
   const el=document.getElementById(id);if(!el)return;sliderPct(el);
   el.addEventListener('input',e=>{const v=parseFloat(e.target.value);const vl=document.getElementById(vid);if(vl)vl.textContent=v.toFixed(dec);sliderPct(el);fn(v,e);scheduleBC();});
-  el.addEventListener('pointerdown',e=>{if(midiLearnMode){e.preventDefault();armMidiTarget(el.dataset.midiId);}});
+  el.addEventListener('pointerdown',e=>{
+    if(midiLearnMode){e.preventDefault();armMidiTarget(el.dataset.midiId);return;}
+    pushHistory(); // snapshot before drag begins so undo restores the pre-drag value
+  });
 }
 function setSV(id,vid,v,dec=0){
   const el=document.getElementById(id),vl=document.getElementById(vid);
@@ -1804,8 +2095,22 @@ function syncUI(){
   setSV('speedBurst','vSpeedBurst',speedBurst,1);setSV('burstDecay','vBurstDecay',burstDecay,2);
   setSV('beatDiv','vBeatDiv',beatDiv,0);setSV('morphTime','vMorphTime',morphTime,1);
   document.getElementById('baseBPM').value=baseBPM.toFixed(1);
-  const chkFields={autoCycleDir:'autoCycleDirection',autoCyclePal:'autoCyclePalette',beatFlash:'beatFlash',beatGlitch:'beatGlitch',beatCycleShape:'beatCycleShape',beatCycleBlend:'beatCycleBlend',beatRandColour:'beatRandColour',beatReverseDir:'beatReverseDir',beatRandSize:'beatRandSize',beatExtremeKick:'beatExtremeKick',beatFeedbackKick:'beatFeedbackKick',beatPixSortKick:'beatPixSortKick',attractorMode:'attractorMode',perfMode:'perfMode',midiClockSync:'midiClockSync'};
-  Object.entries(chkFields).forEach(([id,varName])=>{const el=document.getElementById(id);if(el)el.checked=eval(varName);});
+  // Checkbox sync — uses BOOL_GETTERS (no eval); midiClockSync handled separately
+  const chkFields={
+    autoCycleDir:'autoCycleDirection', autoCyclePal:'autoCyclePalette',
+    beatFlash:'beatFlash', beatGlitch:'beatGlitch',
+    beatCycleShape:'beatCycleShape', beatCycleBlend:'beatCycleBlend',
+    beatRandColour:'beatRandColour', beatReverseDir:'beatReverseDir',
+    beatRandSize:'beatRandSize', beatExtremeKick:'beatExtremeKick',
+    beatFeedbackKick:'beatFeedbackKick', beatPixSortKick:'beatPixSortKick',
+    attractorMode:'attractorMode', perfMode:'perfMode',
+  };
+  Object.entries(chkFields).forEach(([id,varName])=>{
+    const el=document.getElementById(id);
+    if(el) el.checked=BOOL_GETTERS[varName]?.()??false;
+  });
+  const mcsEl=document.getElementById('midiClockSync');
+  if(mcsEl) mcsEl.checked=midiClockSync;
   document.getElementById('pauseBtn').textContent=paused?'Play':'Pause';
   document.getElementById('pauseBtn').classList.toggle('active',paused);
   document.getElementById('morphCurve').value=morphCurve;
@@ -1870,35 +2175,198 @@ function enableMidiLearnMode(on){midiLearnMode=!!on;document.getElementById('mid
 async function enableMidi(){if(!('requestMIDIAccess' in navigator)){midiStatus.textContent='Web MIDI not available.';return;}try{midiAccess=await navigator.requestMIDIAccess({sysex:false});bindMidiIn();midiAccess.onstatechange=bindMidiIn;document.getElementById('enableMidiBtn').classList.add('active');}catch(e){midiStatus.textContent='MIDI denied.';}}
 function bindMidiIn(){if(!midiAccess)return;let names=[];for(const i of midiAccess.inputs.values()){i.onmidimessage=onMidiMsg;names.push(i.name||'Unnamed');}midiStatus.textContent=names.length?`MIDI OK (${names.length} input)`:'MIDI: no inputs.';midiPort.textContent=names.join(', ');}
 
-/* ── MIDI Clock ── */
-let midiClockLastTick=0;
-function onMidiClock(){
-  const t=performance.now();
-  midiClockTicks.push(t);
-  if(midiClockTicks.length>96)midiClockTicks.shift(); // ~4 beats
-  if(midiClockTicks.length>=25){
-    const recent=midiClockTicks.slice(-25);
-    const intervals=recent.slice(1).map((v,i)=>v-recent[i]);
-    const avg=intervals.reduce((a,b)=>a+b,0)/intervals.length;
-    const newBPM=clamp(60000/(avg*24),20,300);
-    midiClockBPM=newBPM;
-    if(midiClockSync){
-      bpm=newBPM;baseBPM=newBPM;
-      const el=document.getElementById('baseBPM');if(el)el.value=newBPM.toFixed(1);
-      document.getElementById('midiClockStatus').textContent=`Clock: ${newBPM.toFixed(1)} BPM ✓`;
-      syncHUD();
+/* ══════════════════════════════════════════════════
+   MIDI CLOCK — proper phase-locked implementation
+══════════════════════════════════════════════════ */
+
+// midiClockSync, midiClockRunning, midiClockTickCount, midiClockBPM, midiClockLatency
+// are declared in the STATE block above — do not redeclare here.
+
+// EMA smoothing for tick interval → BPM
+let _emaInterval = 0;           // exponential moving average of inter-tick ms
+let _lastTickTime = 0;          // performance.now() of previous 0xF8
+const EMA_ALPHA = 0.08;         // low = smoother but slower lock; 0.08 ≈ ~12-tick memory
+
+// Jitter tracking: keep last 24 intervals for std-dev
+const _tickIntervals = new Float64Array(24);
+let _tickIntIdx = 0;
+
+// Beat-phase dot animation (updated in rAF, not in hot tick path)
+let _clockBeatNum = 0;          // 0–3 (quarter notes in a bar)
+let _uiClockTimer = 0;          // throttle DOM updates
+
+function _updateClockUI(now) {
+  if(now - _uiClockTimer < 80) return; // max ~12 Hz DOM updates
+  _uiClockTimer = now;
+
+  const disp = document.getElementById('clockBpmDisplay');
+  const statusEl = document.getElementById('midiClockStatus');
+  const jFill = document.getElementById('jitterFill');
+  const jLabel = document.getElementById('clockJitterLabel');
+
+  if(!midiClockRunning || _emaInterval === 0) {
+    if(disp) { disp.textContent = '— BPM'; disp.className = 'clock-bpm-display inactive'; }
+    if(jFill) jFill.style.width = '0%';
+    if(jLabel) jLabel.textContent = '—';
+    return;
+  }
+
+  const bpmDisplay = midiClockBPM.toFixed(1);
+  if(disp) { disp.textContent = bpmDisplay + ' BPM'; disp.className = 'clock-bpm-display'; }
+
+  // Jitter: std-dev of the last 24 tick intervals in ms
+  let sum = 0, sumSq = 0, n = 0;
+  for(let i = 0; i < 24; i++) {
+    const v = _tickIntervals[i];
+    if(v > 0) { sum += v; sumSq += v*v; n++; }
+  }
+  if(n > 1) {
+    const mean = sum/n;
+    const stdDev = Math.sqrt(sumSq/n - mean*mean);
+    // stdDev < 0.3ms → excellent, >3ms → poor. Map to quality 0–1.
+    const quality = Math.max(0, 1 - stdDev/3);
+    const pct = Math.round(quality*100);
+    if(jFill) {
+      jFill.style.width = pct+'%';
+      jFill.style.background = quality > .75 ? 'var(--range-fill)'
+                              : quality > .45 ? '#cc8800' : '#cc3300';
+    }
+    if(jLabel) jLabel.textContent = stdDev < 0.5 ? 'Excellent'
+                                   : stdDev < 1.2 ? 'Good'
+                                   : stdDev < 2.5 ? 'Fair' : 'Poor';
+  }
+
+  if(statusEl) statusEl.textContent = midiClockSync
+    ? `Locked · ${bpmDisplay} BPM · Beat ${_clockBeatNum+1}/4`
+    : `Receiving · ${bpmDisplay} BPM (sync off)`;
+}
+
+function _pulseBeatDot(beatNum) {
+  // Light up the correct quarter-note dot, dim the previous
+  for(let i = 0; i < 4; i++) {
+    const dot = document.getElementById('cbd'+i);
+    if(!dot) continue;
+    if(i === beatNum)       dot.className = 'clock-beat-dot active';
+    else if(i < beatNum)    dot.className = 'clock-beat-dot dimmed';
+    else                    dot.className = 'clock-beat-dot';
+  }
+}
+
+function onMidiClock() {
+  const t = performance.now();
+
+  // ── EMA tick-interval smoothing ──
+  if(_lastTickTime > 0) {
+    const interval = t - _lastTickTime;
+    // Sanity gate: ignore intervals that imply <20 BPM or >400 BPM
+    if(interval > 0.6 && interval < 120) {
+      _tickIntervals[_tickIntIdx % 24] = interval;
+      _tickIntIdx++;
+      if(_emaInterval === 0) {
+        _emaInterval = interval;          // cold start: seed with first valid interval
+      } else {
+        _emaInterval = _emaInterval*(1-EMA_ALPHA) + interval*EMA_ALPHA;
+      }
+      // 24 ticks per quarter note → BPM = 60000 / (emaInterval × 24)
+      const newBPM = clamp(60000 / (_emaInterval * 24), 20, 300);
+      midiClockBPM = newBPM;
+
+      if(midiClockSync) {
+        bpm = newBPM; baseBPM = newBPM;
+        // Update number input without triggering scheduleBC on every tick
+        const el = document.getElementById('baseBPM');
+        if(el) el.value = newBPM.toFixed(1);
+        syncHUD();
+      }
+    }
+  }
+  _lastTickTime = t;
+  midiClockRunning = true;
+
+  // ── Phase-locked beat firing ──
+  // Count from 0; every 24 ticks = 1 quarter note = 1 beat
+  if(midiClockSync) {
+    midiClockTickCount++;
+
+    // Apply latency compensation: fire slightly early to offset interface delay
+    // We calculate how many ms early to fire based on the compensation setting
+    const ticksPerBeat = 24;
+    const tickMs = _emaInterval > 0 ? _emaInterval : (60000/(bpm*24));
+    const compTicks = midiClockLatency > 0
+      ? 0  // positive = we're late, can't fire in the past
+      : Math.round(Math.abs(midiClockLatency) / tickMs); // fire N ticks early
+
+    const fireAt = ticksPerBeat - compTicks;
+
+    if(midiClockTickCount % ticksPerBeat === fireAt % ticksPerBeat) {
+      // Phase-locked beat: advance dot, update lastBeat reference
+      _clockBeatNum = Math.floor(midiClockTickCount / ticksPerBeat) % 4;
+      _pulseBeatDot(_clockBeatNum);
+
+      // Prevent the time-based beat clock in draw() from double-firing
+      lastBeat = t - (midiClockLatency > 0 ? midiClockLatency : 0);
+
+      // Gate on paused — same behaviour as the time-based beat path in draw()
+      if(!paused) {
+        fireBeatActions();
+        bpmDot.classList.add('pulse');
+        setTimeout(() => bpmDot.classList.remove('pulse'), 80);
+      }
+    }
+  } else {
+    // Clock received but sync is off — still track phase for display
+    midiClockTickCount++;
+    if(midiClockTickCount % 24 === 0) {
+      _clockBeatNum = Math.floor(midiClockTickCount / 24) % 4;
+      _pulseBeatDot(_clockBeatNum);
     }
   }
 }
 
-function parseMidi(e){
-  const[s,d1,d2=0]=e.data;
-  if(s===0xF8){onMidiClock();return null;} // clock tick
-  if(s===0xFA||s===0xFB){midiClockTicks=[];return null;} // start/continue
-  if(s===0xFC){document.getElementById('midiClockStatus').textContent='Clock: stopped.';return null;} // stop
-  const cmd=s&0xF0,ch=s&0x0F;
-  if(cmd===0xB0)return{kind:'cc',channel:ch,number:d1,value:d2,trigger:d2>63};
-  if(cmd===0x90&&d2>0)return{kind:'note',channel:ch,number:d1,value:d2,trigger:true};
+function onMidiClockStart() {
+  // 0xFA — Start: reset to beat 1 of bar 1
+  midiClockTickCount = 0;
+  _clockBeatNum = 0;
+  _emaInterval = 0;         // reset EMA so it re-locks quickly
+  _lastTickTime = 0;
+  _tickIntIdx = 0;
+  _tickIntervals.fill(0);
+  midiClockRunning = true;
+  if(midiClockSync) lastBeat = 0; // force first beat to fire immediately
+  for(let i=0;i<4;i++){const d=document.getElementById('cbd'+i);if(d)d.className='clock-beat-dot';}
+  document.getElementById('midiClockStatus').textContent='Clock: Started — waiting for ticks…';
+}
+
+function onMidiClockContinue() {
+  // 0xFB — Continue: resume from current position WITHOUT resetting tick count
+  // (different from Start which resets to beat 1)
+  midiClockRunning = true;
+  _lastTickTime = 0; // reset only inter-tick timer so first new interval is clean
+  document.getElementById('midiClockStatus').textContent='Clock: Continuing…';
+}
+
+function onMidiClockStop() {
+  // 0xFC — Stop
+  midiClockRunning = false;
+  for(let i=0;i<4;i++){const d=document.getElementById('cbd'+i);if(d)d.className='clock-beat-dot';}
+  const disp=document.getElementById('clockBpmDisplay');
+  if(disp){disp.textContent='— BPM';disp.className='clock-bpm-display inactive';}
+  document.getElementById('midiClockStatus').textContent='Clock: stopped.';
+  document.getElementById('jitterFill').style.width='0%';
+  document.getElementById('clockJitterLabel').textContent='—';
+}
+
+function parseMidi(e) {
+  const [s, d1, d2=0] = e.data;
+  // System real-time messages (no channel, single byte)
+  if(s === 0xF8) { onMidiClock();    return null; } // Timing Clock (24 ppqn)
+  if(s === 0xFA) { onMidiClockStart();   return null; } // Start
+  if(s === 0xFB) { onMidiClockContinue();return null; } // Continue
+  if(s === 0xFC) { onMidiClockStop();    return null; } // Stop
+  // Channel messages
+  const cmd = s & 0xF0, ch = s & 0x0F;
+  if(cmd === 0xB0) return {kind:'cc',  channel:ch, number:d1, value:d2, trigger:d2>63};
+  if(cmd === 0x90 && d2>0) return {kind:'note', channel:ch, number:d1, value:d2, trigger:true};
   return null;
 }
 function onMidiMsg(event){
@@ -2071,6 +2539,71 @@ function updateNDICount(){
 }
 
 /* ══════════════════════════════════════════════════
+   UNDO / REDO — 10-step ring buffer
+   Strategy: snapshot BEFORE any meaningful mutation
+   so every undo step restores the state as it was
+   before that action. Sliders push on pointerdown
+   (before the drag begins). Buttons push immediately
+   before their action runs. Morph and MIDI clock
+   do not push — they're continuous / automatic.
+══════════════════════════════════════════════════ */
+const HISTORY_MAX = 10;
+let _undoStack = [];  // [oldest … newest] — pop from end to undo
+let _redoStack = [];  // cleared on any new action; pop from end to redo
+let _historyLocked = false; // prevent pushHistory during applyFullState
+
+function pushHistory() {
+  if(_historyLocked || IS_PANEL) return;
+  const snap = getFullState();
+  _undoStack.push(snap);
+  if(_undoStack.length > HISTORY_MAX) _undoStack.shift(); // drop oldest
+  _redoStack = []; // new action invalidates redo branch
+  _updateUndoUI();
+}
+
+function undo() {
+  if(!_undoStack.length) return;
+  // Save current state to redo stack before overwriting
+  _redoStack.push(getFullState());
+  if(_redoStack.length > HISTORY_MAX) _redoStack.shift();
+  const prev = _undoStack.pop();
+  _historyLocked = true;
+  applyFullState(prev, false);
+  _historyLocked = false;
+  _updateUndoUI();
+}
+
+function redo() {
+  if(!_redoStack.length) return;
+  // Save current state to undo stack before overwriting
+  _undoStack.push(getFullState());
+  if(_undoStack.length > HISTORY_MAX) _undoStack.shift();
+  const next = _redoStack.pop();
+  _historyLocked = true;
+  applyFullState(next, false);
+  _historyLocked = false;
+  _updateUndoUI();
+}
+
+function _updateUndoUI() {
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+  const status  = document.getElementById('undoStatus');
+  if(undoBtn) undoBtn.disabled = _undoStack.length === 0;
+  if(redoBtn) redoBtn.disabled = _redoStack.length === 0;
+  if(status) {
+    if(_undoStack.length === 0 && _redoStack.length === 0) {
+      status.textContent = 'No history';
+    } else {
+      const parts = [];
+      if(_undoStack.length) parts.push(_undoStack.length + ' undo');
+      if(_redoStack.length) parts.push(_redoStack.length + ' redo');
+      status.textContent = parts.join(' · ');
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════
    SECTION COLLAPSE
 ══════════════════════════════════════════════════ */
 const DEFAULT_CLOSED=['mouse','perf','midi','export'];
@@ -2096,14 +2629,14 @@ function initSections(){
    EVENTS
 ══════════════════════════════════════════════════ */
 function attachEvents(){
-  document.querySelectorAll('#dirRow .btn,#dirRowD .btn').forEach(b=>b.addEventListener('click',e=>{if(maybeArmLearn(b)){e.preventDefault();return;}setDirMode(+b.dataset.dir);}));
-  document.querySelectorAll('#lockRow .btn').forEach(b=>b.addEventListener('click',e=>{if(maybeArmLearn(b)){e.preventDefault();return;}setLockMode(b.dataset.lock);}));
-  document.querySelectorAll('#shapeRow .btn').forEach(b=>b.addEventListener('click',e=>{if(maybeArmLearn(b)){e.preventDefault();return;}setShapeMode(b.dataset.shape);}));
-  document.querySelectorAll('#stypeRow .btn,#stypeRow2 .btn').forEach(b=>b.addEventListener('click',e=>{if(maybeArmLearn(b)){e.preventDefault();return;}setShapeType(b.dataset.stype);}));
-  document.querySelectorAll('#blendBtns .bm-btn').forEach(b=>b.addEventListener('click',()=>setBlendMode(b.dataset.blend)));
-  document.querySelectorAll('#fbBlendBtns .fb-bm-btn').forEach(b=>b.addEventListener('click',()=>setFbBlend(b.dataset.fblend)));
-  document.querySelectorAll('.psdir').forEach(b=>b.addEventListener('click',()=>{pixSortDir=b.dataset.psdir;document.querySelectorAll('.psdir').forEach(x=>x.classList.toggle('active',x.dataset.psdir===pixSortDir));scheduleBC();}));
-  document.querySelectorAll('.pssort').forEach(b=>b.addEventListener('click',()=>{pixSortBy=b.dataset.pssort;document.querySelectorAll('.pssort').forEach(x=>x.classList.toggle('active',x.dataset.pssort===pixSortBy));scheduleBC();}));
+  document.querySelectorAll('#dirRow .btn,#dirRowD .btn').forEach(b=>b.addEventListener('click',e=>{if(maybeArmLearn(b)){e.preventDefault();return;}pushHistory();setDirMode(+b.dataset.dir);}));
+  document.querySelectorAll('#lockRow .btn').forEach(b=>b.addEventListener('click',e=>{if(maybeArmLearn(b)){e.preventDefault();return;}pushHistory();setLockMode(b.dataset.lock);}));
+  document.querySelectorAll('#shapeRow .btn').forEach(b=>b.addEventListener('click',e=>{if(maybeArmLearn(b)){e.preventDefault();return;}pushHistory();setShapeMode(b.dataset.shape);}));
+  document.querySelectorAll('#stypeRow .btn,#stypeRow2 .btn').forEach(b=>b.addEventListener('click',e=>{if(maybeArmLearn(b)){e.preventDefault();return;}pushHistory();setShapeType(b.dataset.stype);}));
+  document.querySelectorAll('#blendBtns .bm-btn').forEach(b=>b.addEventListener('click',()=>{pushHistory();setBlendMode(b.dataset.blend);}));
+  document.querySelectorAll('#fbBlendBtns .fb-bm-btn').forEach(b=>b.addEventListener('click',()=>{pushHistory();setFbBlend(b.dataset.fblend);}));
+  document.querySelectorAll('.psdir').forEach(b=>b.addEventListener('click',()=>{pushHistory();pixSortDir=b.dataset.psdir;document.querySelectorAll('.psdir').forEach(x=>x.classList.toggle('active',x.dataset.psdir===pixSortDir));scheduleBC();}));
+  document.querySelectorAll('.pssort').forEach(b=>b.addEventListener('click',()=>{pushHistory();pixSortBy=b.dataset.pssort;document.querySelectorAll('.pssort').forEach(x=>x.classList.toggle('active',x.dataset.pssort===pixSortBy));scheduleBC();}));
   document.querySelectorAll('.theme-btn').forEach(b=>b.addEventListener('click',()=>setTheme(b.dataset.theme)));
   document.querySelectorAll('.pal-tab').forEach(b=>b.addEventListener('click',()=>switchPalPage(+b.dataset.page)));
   document.getElementById('cpRandBtn').onclick=randomiseCustomColours;
@@ -2160,14 +2693,35 @@ function attachEvents(){
   // Checkboxes
   const chkMap={'autoCycleDir':'autoCycleDirection','autoCyclePal':'autoCyclePalette','beatFlash':'beatFlash','beatGlitch':'beatGlitch','beatCycleShape':'beatCycleShape','beatCycleBlend':'beatCycleBlend','beatRandColour':'beatRandColour','beatReverseDir':'beatReverseDir','beatRandSize':'beatRandSize','beatExtremeKick':'beatExtremeKick','beatFeedbackKick':'beatFeedbackKick','beatPixSortKick':'beatPixSortKick','attractorMode':'attractorMode','perfMode':'perfMode'};
   Object.entries(chkMap).forEach(([id,vn])=>{const el=document.getElementById(id);if(!el)return;el.onchange=e=>{applyBoolField(vn,e.target.checked);scheduleBC();};});
-  document.getElementById('midiClockSync').onchange=e=>{midiClockSync=e.target.checked;if(!midiClockSync)document.getElementById('midiClockStatus').textContent='Clock: disabled.';};
+  document.getElementById('midiClockSync').onchange=e=>{
+    midiClockSync=e.target.checked;
+    if(!midiClockSync){
+      // Switching off: restore time-based beat at current BPM
+      lastBeat=0;
+      document.getElementById('midiClockStatus').textContent='Clock: sync off.';
+    }
+  };
+  // Latency compensation slider (no attachSlider — not in presets)
+  (()=>{
+    const el=document.getElementById('clockLatency');
+    const vl=document.getElementById('vClockLatency');
+    if(!el)return;
+    sliderPct(el);
+    el.addEventListener('input',e=>{
+      midiClockLatency=parseInt(e.target.value);
+      if(vl)vl.textContent=(midiClockLatency>0?'+':'')+midiClockLatency;
+      sliderPct(el);
+    });
+  })();
   document.querySelectorAll('.bbtns button[data-multi]').forEach(b=>b.addEventListener('click',()=>multiplyBPM(parseFloat(b.dataset.multi))));
   document.getElementById('resetBeatBtn').onclick=e=>{if(maybeArmLearn(e.currentTarget))return;resetBeat();};
   document.getElementById('tapTempoBtn').onclick=e=>{if(maybeArmLearn(e.currentTarget))return;doTapTempo();};
   document.getElementById('resetRotBtn').onclick=resetRotNow;
   document.getElementById('pauseBtn').onclick=e=>{if(maybeArmLearn(e.currentTarget))return;paused=!paused;e.currentTarget.textContent=paused?'Play':'Pause';e.currentTarget.classList.toggle('active',paused);scheduleBC();};
   document.getElementById('fullscreenBtn').onclick=toggleFS;
-  document.getElementById('randomiseBtn').onclick=e=>{if(maybeArmLearn(e.currentTarget))return;randomise();};
+  document.getElementById('randomiseBtn').onclick=e=>{if(maybeArmLearn(e.currentTarget))return;pushHistory();randomise();};
+  document.getElementById('undoBtn').onclick=undo;
+  document.getElementById('redoBtn').onclick=redo;
   document.getElementById('toggleHudBtn').onclick=toggleHUD;
   document.getElementById('popoutBtn').onclick=()=>{const url=location.href.split('?')[0]+'?panel=1';window.open(url,'glitch-panel','width=1100,height=860,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes');};
   // NDI / Network Out
@@ -2192,9 +2746,10 @@ function attachEvents(){
   document.getElementById('exportBtn').onclick=exportFrame;
   document.getElementById('exportPresetBtn').onclick=exportPreset;
   document.getElementById('importPresetBtn').onclick=()=>document.getElementById('importPresetInput').click();
-  document.getElementById('importPresetInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importFromFile(f);e.target.value='';});
+  document.getElementById('importPresetInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f){pushHistory();importFromFile(f);}e.target.value='';});
   document.getElementById('resetBtn').onclick=e=>{
     if(maybeArmLearn(e.currentTarget))return;
+    pushHistory();
     paletteIndex=0;maxBlocks=220;avgSize=80;sizeVariance=.6;speedBase=1;directionMode=0;lockMode='free';gridSize=100;gridJitter=10;fadeInSeconds=0;fadeOutSeconds=0;scanlineStrength=0;trailAlpha=.25;blendMode='source-over';baseBPM=120;bpm=120;autoCycleDirection=false;autoCyclePalette=false;pulseAmount=0;pulseValue=0;paused=false;shapeMode='fill';shapeType='rect';outlineWidth=3;roundness=0;rotationSpeed=0;glowAmount=0;chromaAmount=0;glitchRate=0;vignetteAmount=0;attractorMode=false;attractorStrength=1;beatFlash=false;beatGlitch=false;beatCycleShape=false;beatCycleBlend=false;beatRandColour=false;beatReverseDir=false;beatRandSize=false;beatExtremeKick=false;beatFeedbackKick=false;beatPixSortKick=false;speedBurst=0;burstDecay=.5;beatDiv=1;beatCount=0;flashAlpha=0;perfMode=false;extremeAmount=0;xFreezeRate=.5;xBlockSize=.5;xChromaFault=.5;feedbackAmount=0;feedbackZoom=0;feedbackRotate=0;feedbackShiftX=0;feedbackBlend_amt=.7;feedbackBlend='source-over';pixSortAmount=0;pixSortThresh=.4;pixSortRows=20;pixSortDir='h';pixSortBy='brightness';morphTime=2;morphCurve='ease';morphActive=false;activeScene=-1;
     cc1.value='#00ffff';cc2.value='#ff00ff';cc3.value='#ffffff';
     AM_PARAMS.forEach(p=>audioMappings[p.id]={source:'off',strength:1});
@@ -2202,6 +2757,9 @@ function attachEvents(){
     buildPalUI();buildSceneGrid();rebuildBlocks();resetRotNow();syncUI();clearCanvas();buildAudioMappingUI();scheduleBC();
   };
   window.addEventListener('keydown',e=>{
+    // Undo/redo — intercept before the no-input-focus guard below
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'&&!e.shiftKey){e.preventDefault();undo();return;}
+    if((e.ctrlKey||e.metaKey)&&(e.key.toLowerCase()==='y'||(e.key.toLowerCase()==='z'&&e.shiftKey))){e.preventDefault();redo();return;}
     if(e.target.matches('input,select,textarea'))return;
     if(e.code==='Space'){e.preventDefault();document.getElementById('pauseBtn').click();}
     if(e.key.toLowerCase()==='f')toggleFS();
@@ -2226,8 +2784,15 @@ buildSceneGrid();
 buildAudioMappingUI();
 initSections();
 attachEvents();
-if(!IS_PANEL){rebuildBlocks();resetRotNow();clearCanvas();requestAnimationFrame(loop);}
-else{if(BC)BC.postMessage({type:'ready'});}
+if(!IS_PANEL){
+  initPixSortWorker(); // must be called before the render loop starts
+  rebuildBlocks();
+  resetRotNow();
+  clearCanvas();
+  requestAnimationFrame(loop);
+}else{
+  if(BC)BC.postMessage({type:'ready'});
+}
 syncUI();updateBindList();
 </script>
 </body>
