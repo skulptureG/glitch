@@ -313,6 +313,31 @@ body.panel-mode .bbtns button{padding:7px 0;font-size:11.5px}
 .ndi-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--bpm-bg);margin-right:5px;flex-shrink:0;transition:background .1s,box-shadow .1s;vertical-align:middle}
 .ndi-dot.live{background:#ff3333;box-shadow:0 0 7px #ff3333}
 
+/* NDI Capture Mode — strip all UI, leave clean canvas for screen capture */
+body.ndi-capture #panel,
+body.ndi-capture #panel-tab,
+body.ndi-capture #panel-resize,
+body.ndi-capture #hud,
+body.ndi-capture #recBadge{display:none!important}
+#ndi-capture-hud{
+  position:fixed;bottom:0;left:0;right:0;z-index:99;
+  padding:7px 16px;
+  background:rgba(0,0,0,.5);
+  font-family:'Courier New',monospace;font-size:10px;
+  color:rgba(255,255,255,.5);
+  display:none;align-items:center;gap:16px;
+  backdrop-filter:blur(3px);
+}
+body.ndi-capture #ndi-capture-hud{display:flex!important}
+#ndi-capture-fps{font-variant-numeric:tabular-nums;color:rgba(255,255,255,.7)}
+#ndi-exit-btn{
+  margin-left:auto;padding:3px 12px;
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);
+  color:rgba(255,255,255,.65);font-family:inherit;font-size:9.5px;cursor:pointer;
+  border-radius:2px;transition:background .14s;letter-spacing:.06em;
+}
+#ndi-exit-btn:hover{background:rgba(255,255,255,.2)}
+
 /* ── Viewer mode (full-screen receiver) ── */
 body.viewer-mode{background:#000;overflow:hidden}
 body.viewer-mode > *{display:none!important}
@@ -337,6 +362,14 @@ body.panel-mode #pm-status{display:flex}
 <canvas id="c"></canvas>
 <div id="recBadge">⏺ REC <span id="recBadgeTime">0:00</span></div>
 <div id="panel-resize"></div>
+
+<!-- NDI Capture Mode overlay — visible only when body.ndi-capture is active -->
+<div id="ndi-capture-hud">
+  <span>NDI CAPTURE MODE</span>
+  <span>FPS <span id="ndi-capture-fps">--</span></span>
+  <span id="ndi-capture-res"></span>
+  <button id="ndi-exit-btn">✕ Exit Capture Mode</button>
+</div>
 
 <!-- WebRTC Viewer Overlay (visible when ?viewer=ID) -->
 <div id="viewer-overlay">
@@ -699,29 +732,56 @@ body.panel-mode #pm-status{display:flex}
 </div>
 </div>
 
-<!-- ═══ NETWORK OUT ═══ -->
+<!-- ═══ NDI OUT ═══ -->
 <div class="sec-wrap">
-<h3 data-sec="ndi">Network Out <span class="arr">▾</span></h3>
+<h3 data-sec="ndi">NDI Output <span class="arr">▾</span></h3>
 <div class="sb" id="sec-ndi">
-  <div class="snote" style="border:none;padding:0;margin-bottom:6px">Browser-to-browser WebRTC stream. Share the viewer URL — anyone who opens it sees your canvas live. No NDI software required on the viewer side.<br><br>For true NDI output, capture the browser window with <b>NDI Screen Capture HX</b> (free, ndi.tv).</div>
-  <div class="row">
-    <button class="btn" id="ndiStartBtn"><span class="ndi-dot" id="ndiDot"></span>Go Live</button>
-    <button class="btn" id="ndiStopBtn" style="display:none">■ Stop</button>
+
+  <!-- Capture Mode button — the primary action -->
+  <button class="pbtn" id="ndiCaptureBtn" style="margin-bottom:6px;font-size:10px;letter-spacing:.04em">
+    ⬛ Enter NDI Capture Mode
+  </button>
+  <div class="snote" style="border:none;padding:0;margin-bottom:10px">
+    Hides all controls and shows the canvas full-screen — ready to capture with any NDI tool. Press <b>Esc</b> or click Exit to return.
   </div>
-  <div id="ndiStatus" style="font-size:8.5px;color:var(--slbl);margin:4px 0">Not streaming.</div>
-  <div class="slbl">Viewer URL</div>
-  <div class="ndi-url-row">
-    <input id="ndiViewerUrl" type="text" readonly placeholder="Click Go Live to generate…"/>
-    <button class="btn" id="ndiCopyBtn" style="flex:0 0 36px;font-size:8px">Copy</button>
+
+  <div class="slbl">Method 1 — NDI Screen Capture HX (Recommended, Free)</div>
+  <div class="snote" style="border:none;padding:0;margin-bottom:4px">
+    1. Download <b>NDI Tools</b> from ndi.video — install the bundle<br>
+    2. Open <b>NDI Screen Capture HX</b><br>
+    3. Click <b>Enter NDI Capture Mode</b> above, then go fullscreen (F)<br>
+    4. In Screen Capture HX — select this browser window or display<br>
+    5. It appears instantly as an NDI source on your LAN<br>
+    6. In Resolume / MadMapper / OBS / vMix — add NDI Input, select it
   </div>
-  <div id="ndiViewerCount" style="font-size:8.5px;color:var(--slbl);margin:2px 0"></div>
-  <div class="ndi-qr" id="ndiQR"><img id="ndiQRImg" src="" alt="QR"/><div style="font-size:7.5px;color:var(--slbl);margin-top:4px">Scan to open on another device</div></div>
-  <div class="ctrl" style="margin-top:6px"><label><span class="lname">Stream FPS</span></label>
-    <select id="ndiStreamFPS">
-      <option value="24">24 fps</option>
-      <option value="30" selected>30 fps</option>
-      <option value="60">60 fps</option>
-    </select>
+  <button class="pbtn" id="ndiToolsLink" style="margin-bottom:8px">↗ ndi.video/tools (opens in new tab)</button>
+
+  <div class="slbl">Method 2 — OBS Studio + obs-ndi Plugin (Free)</div>
+  <div class="snote" style="border:none;padding:0;margin-bottom:4px">
+    1. Install OBS Studio (obsproject.com)<br>
+    2. Install obs-ndi plugin (github.com/obs-ndi/obs-ndi)<br>
+    3. In OBS: add a <b>Window Capture</b> source → select this browser<br>
+    4. OBS menu: Tools → NDI Output Settings → enable Main Output<br>
+    5. Broadcasts as NDI on your network automatically
+  </div>
+  <div class="row" style="margin-bottom:8px">
+    <button class="btn" id="obsLink" style="font-size:8.5px">↗ obsproject.com</button>
+    <button class="btn" id="obsNdiLink" style="font-size:8.5px">↗ obs-ndi plugin</button>
+  </div>
+
+  <div class="slbl">Method 3 — Spout / Syphon Bridge</div>
+  <div class="snote" style="border:none;padding:0;margin-bottom:8px">
+    <b>Windows:</b> SpoutBrowser extension → captures tab as Spout texture → bridge via Spout-to-NDI converter<br>
+    <b>macOS:</b> Syphon Recorder → capture browser window → NDISyphon to broadcast
+  </div>
+
+  <div class="slbl">Capture Tips</div>
+  <div class="snote" style="border:none;padding:0">
+    • Use <b>Enter NDI Capture Mode</b> then <b>F</b> for fullscreen — zero UI in the capture<br>
+    • Match Target FPS (Performance) to your NDI receiver frame rate (25/30/50/60)<br>
+    • Assign your GPU to the browser in driver settings for headroom<br>
+    • Perf Mode cuts CPU load if NDI + rendering drops frames<br>
+    • On Windows: set Chrome/Firefox GPU to your dedicated card in NVIDIA Control Panel
   </div>
 </div>
 </div>
@@ -788,40 +848,6 @@ body.panel-mode #pm-status{display:flex}
 ══════════════════════════════════════════════════ */
 const _params = new URLSearchParams(location.search);
 const IS_PANEL  = _params.has('panel');
-const IS_VIEWER = _params.has('viewer');
-const VIEWER_PEER_ID = _params.get('viewer') || '';
-
-if(IS_VIEWER){
-  // Full-screen viewer mode — show overlay immediately, hide everything else
-  document.body.classList.add('viewer-mode');
-  document.documentElement.style.overflow='hidden';
-  document.documentElement.style.background='#000';
-  // Load PeerJS and connect to broadcaster
-  const pjScript=document.createElement('script');
-  pjScript.src='https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js';
-  pjScript.onload=()=>{
-    const hud=document.getElementById('viewer-hud');
-    const video=document.getElementById('viewer-video');
-    hud.textContent='Connecting…';
-    const peer=new Peer({config:{iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]}});
-    peer.on('open',()=>{
-      hud.textContent='Calling broadcaster…';
-      const call=peer.call(VIEWER_PEER_ID, null); // null — viewer doesn't send media
-      if(!call){hud.textContent='Could not reach broadcaster. Is it live?';return;}
-      call.on('stream',stream=>{
-        video.srcObject=stream;
-        video.play().catch(()=>{});
-        hud.textContent='Glitch Cubes · Network View';
-        setTimeout(()=>{hud.style.opacity='0';},3000);
-      });
-      call.on('close',()=>{hud.style.opacity='1';hud.textContent='Stream ended.';});
-      call.on('error',err=>{hud.style.opacity='1';hud.textContent='Error: '+err.message;});
-    });
-    peer.on('error',err=>{hud.style.opacity='1';hud.textContent='Peer error: '+err.type;});
-  };
-  pjScript.onerror=()=>{document.getElementById('viewer-hud').textContent='Failed to load WebRTC library.';};
-  document.head.appendChild(pjScript);
-}
 
 if(IS_PANEL){
   document.body.classList.add('panel-mode');
@@ -1922,6 +1948,7 @@ function loop(now){
     document.getElementById('hMs').textContent=frameMs.toFixed(1)+'ms';
     document.getElementById('hMs').className='vv'+(pct>85?' warn':'');
     broadcastFPS(fps,frameMs.toFixed(1));
+    updateNDICaptureHUD(fps);
   }
 }
 
@@ -2459,84 +2486,28 @@ function exportPreset(){const b=new Blob([JSON.stringify(getFullState(),null,2)]
 function importFromFile(f){if(!f)return;const r=new FileReader();r.onload=e=>{try{applyFullState(JSON.parse(e.target.result));}catch(err){alert('Import failed.');}};r.readAsText(f);}
 
 function randomise(){
+  pushHistory();
   setPalIdx(randomInt(getAllPals().length));setDirMode(randomInt(9));setLockMode(LOCKS[randomInt(3)]);setShapeMode(SHAPES[randomInt(3)]);setShapeType(STYPES[randomInt(STYPES.length)]);setBlendMode(BLENDS[randomInt(BLENDS.length)]);
   speedBase=rand(.4,3.2);maxBlocks=Math.round(rand(80,400)/10)*10;avgSize=rand(20,180);sizeVariance=rand(.15,1);fadeInSeconds=rand(0,1.6);fadeOutSeconds=rand(0,1.8);gridSize=rand(30,180);gridJitter=rand(0,26);trailAlpha=rand(.08,.5);scanlineStrength=rand(0,.22);pulseAmount=rand(0,.22);baseBPM=Math.round(rand(70,180)*10)/10;bpm=baseBPM*[.5,1,2][randomInt(3)];autoCycleDirection=Math.random()>.5;autoCyclePalette=Math.random()>.5;outlineWidth=rand(1,10);roundness=rand(0,1);rotationSpeed=Math.round(rand(0,8)*10)/10;glowAmount=rand(0,24);chromaAmount=rand(0,.45);glitchRate=rand(0,.35);vignetteAmount=rand(0,.5);extremeAmount=rand(0,.3);
-  // New params in randomise
-  feedbackAmount=Math.random()>.6?rand(0,.5):0;feedbackZoom=rand(-.2,.2);feedbackRotate=rand(-.3,.3);feedbackBlend_amt=rand(.4,.9);
-  pixSortAmount=Math.random()>.6?rand(0,.4):0;pixSortThresh=rand(.2,.7);pixSortDir=Math.random()>.5?'h':'v';pixSortBy=['brightness','hue','saturation'][randomInt(3)];
+  // Feedback — amount biased toward off, but all parameters randomised when on
+  feedbackAmount=Math.random()>.6?rand(0,.5):0;
+  feedbackZoom=rand(-.2,.2);
+  feedbackRotate=rand(-.3,.3);
+  feedbackBlend_amt=rand(.4,.9);
+  // feedbackBlend: pick from the subset available in the feedback blend grid
+  feedbackBlend=['source-over','screen','lighter','difference','overlay','multiply'][randomInt(6)];
+  setFbBlend(feedbackBlend); // sync the button highlight
+  // Pixel sort — amount biased toward off, but dir/mode/threshold all randomised
+  pixSortAmount=Math.random()>.6?rand(0,.4):0;
+  pixSortThresh=rand(.2,.7);
+  pixSortDir=Math.random()>.5?'h':'v';
+  document.querySelectorAll('.psdir').forEach(b=>b.classList.toggle('active',b.dataset.psdir===pixSortDir));
+  pixSortBy=['brightness','hue','saturation'][randomInt(3)];
+  document.querySelectorAll('.pssort').forEach(b=>b.classList.toggle('active',b.dataset.pssort===pixSortBy));
   morphTime=rand(.5,4);
   rebuildBlocks();if(rotationSpeed===0)resetRotNow();syncUI();scheduleBC();
 }
 
-/* ══════════════════════════════════════════════════
-   NDI / NETWORK OUT (WebRTC broadcaster)
-══════════════════════════════════════════════════ */
-let ndiPeer=null, ndiStream=null, ndiViewers=[], ndiLive=false;
-
-function loadPeerJS(cb){
-  if(window.Peer){cb();return;}
-  const s=document.createElement('script');
-  s.src='https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js';
-  s.onload=cb;
-  s.onerror=()=>document.getElementById('ndiStatus').textContent='Failed to load WebRTC library.';
-  document.head.appendChild(s);
-}
-
-function startNDI(){
-  if(IS_PANEL||!c)return;
-  document.getElementById('ndiStatus').textContent='Loading…';
-  loadPeerJS(()=>{
-    const fps=parseInt(document.getElementById('ndiStreamFPS').value)||30;
-    ndiStream=c.captureStream(fps);
-    ndiPeer=new Peer({config:{iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]}});
-    ndiPeer.on('open',id=>{
-      ndiLive=true;
-      const viewerUrl=location.origin+location.pathname+'?viewer='+id;
-      document.getElementById('ndiViewerUrl').value=viewerUrl;
-      document.getElementById('ndiStatus').textContent='Live · Peer ID: '+id;
-      document.getElementById('ndiDot').classList.add('live');
-      document.getElementById('ndiStartBtn').style.display='none';
-      document.getElementById('ndiStopBtn').style.display='';
-      // QR code via free API
-      const qrContainer=document.getElementById('ndiQR');
-      const qrImg=document.getElementById('ndiQRImg');
-      qrImg.src='https://api.qrserver.com/v1/create-qr-code/?size=120x120&data='+encodeURIComponent(viewerUrl);
-      qrContainer.style.display='block';
-      updateNDICount();
-    });
-    ndiPeer.on('call',call=>{
-      // Answer every incoming call with our canvas stream; viewer sends null
-      call.answer(ndiStream);
-      ndiViewers.push(call);
-      call.on('close',()=>{ndiViewers=ndiViewers.filter(v=>v!==call);updateNDICount();});
-      call.on('error',()=>{ndiViewers=ndiViewers.filter(v=>v!==call);updateNDICount();});
-      updateNDICount();
-    });
-    ndiPeer.on('error',err=>{
-      document.getElementById('ndiStatus').textContent='Error: '+err.type+'. Try again.';
-      stopNDI();
-    });
-    ndiPeer.on('disconnected',()=>{document.getElementById('ndiStatus').textContent='Disconnected from signalling server.';});
-  });
-}
-
-function stopNDI(){
-  if(ndiPeer){ndiPeer.destroy();ndiPeer=null;}
-  if(ndiStream){ndiStream.getTracks().forEach(t=>t.stop());ndiStream=null;}
-  ndiViewers=[];ndiLive=false;
-  document.getElementById('ndiStatus').textContent='Not streaming.';
-  document.getElementById('ndiDot').classList.remove('live');
-  document.getElementById('ndiViewerUrl').value='';
-  document.getElementById('ndiQR').style.display='none';
-  document.getElementById('ndiStartBtn').style.display='';
-  document.getElementById('ndiStopBtn').style.display='none';
-  document.getElementById('ndiViewerCount').textContent='';
-}
-
-function updateNDICount(){
-  const n=ndiViewers.length;
-  document.getElementById('ndiViewerCount').textContent=n>0?n+' viewer'+(n>1?'s':'')+' connected':'No viewers yet.';
-}
 
 /* ══════════════════════════════════════════════════
    UNDO / REDO — 10-step ring buffer
@@ -2601,6 +2572,43 @@ function _updateUndoUI() {
       status.textContent = parts.join(' · ');
     }
   }
+}
+
+/* ══════════════════════════════════════════════════
+   NDI CAPTURE MODE
+   Strips all UI — canvas only — for clean screen
+   capture by NDI Screen Capture HX, OBS, etc.
+══════════════════════════════════════════════════ */
+let _ndiCaptureActive = false;
+
+function enterNDICapture(){
+  _ndiCaptureActive = true;
+  document.body.classList.add('ndi-capture');
+  // Update the resolution readout
+  const resEl = document.getElementById('ndi-capture-res');
+  if(resEl) resEl.textContent = c.width + '×' + c.height;
+  // Request fullscreen — user can cancel with Esc which also exits capture mode
+  document.documentElement.requestFullscreen?.().catch(()=>{});
+}
+
+function exitNDICapture(){
+  _ndiCaptureActive = false;
+  document.body.classList.remove('ndi-capture');
+  if(document.fullscreenElement) document.exitFullscreen?.();
+}
+
+// Keep resolution readout current on resize
+addEventListener('resize',()=>{
+  if(!_ndiCaptureActive) return;
+  const resEl = document.getElementById('ndi-capture-res');
+  if(resEl && c) resEl.textContent = c.width + '×' + c.height;
+});
+
+// Mirror live FPS into capture overlay (called from the FPS update path in loop())
+function updateNDICaptureHUD(fps){
+  if(!_ndiCaptureActive) return;
+  const el = document.getElementById('ndi-capture-fps');
+  if(el) el.textContent = fps;
 }
 
 /* ══════════════════════════════════════════════════
@@ -2724,16 +2732,12 @@ function attachEvents(){
   document.getElementById('redoBtn').onclick=redo;
   document.getElementById('toggleHudBtn').onclick=toggleHUD;
   document.getElementById('popoutBtn').onclick=()=>{const url=location.href.split('?')[0]+'?panel=1';window.open(url,'glitch-panel','width=1100,height=860,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes');};
-  // NDI / Network Out
-  document.getElementById('ndiStartBtn').onclick=startNDI;
-  document.getElementById('ndiStopBtn').onclick=stopNDI;
-  document.getElementById('ndiCopyBtn').onclick=()=>{
-    const url=document.getElementById('ndiViewerUrl').value;
-    if(!url)return;
-    navigator.clipboard?.writeText(url).then(()=>{
-      const btn=document.getElementById('ndiCopyBtn');btn.textContent='✓';setTimeout(()=>btn.textContent='Copy',1500);
-    });
-  };
+  // NDI capture mode
+  document.getElementById('ndiCaptureBtn').onclick=enterNDICapture;
+  document.getElementById('ndi-exit-btn').onclick=exitNDICapture;
+  document.getElementById('ndiToolsLink').onclick=()=>window.open('https://ndi.video/tools','_blank');
+  document.getElementById('obsLink').onclick=()=>window.open('https://obsproject.com','_blank');
+  document.getElementById('obsNdiLink').onclick=()=>window.open('https://github.com/obs-ndi/obs-ndi/releases','_blank');
   document.getElementById('enableAudioBtn').onclick=enableAudio;
   document.getElementById('disableAudioBtn').onclick=disableAudio;
   document.getElementById('enableMidiBtn').onclick=enableMidi;
@@ -2770,6 +2774,7 @@ function attachEvents(){
     if(e.key.toLowerCase()==='h')toggleHUD();
     if(e.key==='Tab'||e.key==='`'){e.preventDefault();if(!IS_PANEL)panel.classList.toggle('closed');}
     if(e.key==='Escape'&&midiLearnMode)enableMidiLearnMode(false);
+    if(e.key==='Escape'&&_ndiCaptureActive)exitNDICapture();
     // Scene recall: keys 1–9
     if(e.key>='1'&&e.key<='9'&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){recallScene(parseInt(e.key)-1);}
     if(e.key==='0'&&!e.shiftKey){recallScene(9);}
